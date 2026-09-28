@@ -1,0 +1,223 @@
+name: ci
+
+on:
+  push:
+    # verify.mjs checks this against the repository's live branch, so a name
+    # that does not match skips every push silently.
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22 is the declared floor in package.json engines; 24 is the Active LTS.
+        # Node 20 is absent: `node --test` cannot take a glob there.
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # `yaml` is a devDependency of the *build*: tools/ is not published, so the
+      # package stays zero-dependency for consumers. .npmrc sets legacy-peer-deps,
+      # without which npm resolves the "*" host peers and pulls the whole pi tree.
+      - name: Install build dependencies
+        run: npm ci
+
+      - name: Assert the build stays dependency-light
+        run: |
+          count=$(ls node_modules | wc -l)
+          if [ "$count" -gt 3 ]; then
+            echo "::error::npm ci installed $count packages — expected only the build's own dependency."
+            ls node_modules
+            exit 1
+          fi
+          echo "installed $count package(s): $(ls node_modules | tr '\n' ' ')"
+
+      # Verifies the pinned upstream checksum and rebuilds the generated tree;
+      # vendor/ is gitignored, so this is the only place the checksum is checked.
+      - name: Vendor and sync
+        run: |
+          node tools/vendor.mjs
+          node tools/sync.mjs
+
+      - name: Verify structure
+        run: node tools/verify.mjs
+
+      # `verify` checks the shape of the tree; these check that the build still
+      # *produces* the right shape. The glob is explicit: `node --test tests/`
+      # only accepts a directory from Node 22.18, and this job pins 22.
+      - name: Unit tests
+        run: node --test 'tests/*.test.mjs'
+
+      # A leaked credential is cheap to fix in review and expensive after
+      # publication, and removing the file does not remove it from git history.
+      - name: Scan for credential-shaped strings
+        run: node tools/scan-secrets.mjs
+
+      # The two extensions are the only code this port owns, and nothing else
+      # compiles them: pi loads TypeScript through jiti, so a type error would
+      # only surface at runtime in a user's session.
+      #
+      # The host package is installed into a throwaway directory and referenced
+      # by absolute path: it is a *type* input and must never become a dependency
+      # of the published package. `--ignore-scripts` is required, not an
+      # optimisation — the host's esbuild postinstall downloads a platform binary
+      # that fails on runners with a read-only temp dir.
+      - name: Typecheck the extensions
+        run: |
+          set -euo pipefail
+          WORK=$(mktemp -d)
+          cd "$WORK"
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund --silent --ignore-scripts \
+            typescript@5 @types/node@22 @earendil-works/pi-coding-agent@0
+          cat > tsconfig.json <<JSON
+          {
+            "compilerOptions": {
+              "strict": true,
+              "skipLibCheck": true,
+              "target": "es2022",
+              "module": "nodenext",
+              "moduleResolution": "nodenext",
+              "noEmit": true,
+              "typeRoots": ["$WORK/node_modules/@types"],
+              "paths": {
+                "@earendil-works/pi-coding-agent": ["$WORK/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"]
+              }
+            },
+            "files": [
+              "$GITHUB_WORKSPACE/src/extensions/seo-setup.ts",
+              "$GITHUB_WORKSPACE/src/extensions/seo-schema-validator.ts"
+            ]
+          }
+          JSON
+          ./node_modules/.bin/tsc -p tsconfig.json
+
+      # The generated tree is committed so a git-source install works without a
+      # build step. Drift between it and the sync output is a reviewable diff,
+      # not something to discover after publishing.
+      - name: Assert the committed tree matches the sync output
+        run: |
+          if ! git diff --exit-code --stat; then
+            echo "::error::Generated tree is out of date. Run 'npm run build' and commit the result."
+            exit 1
+          fi
+
+      - name: Assert the published tarball carries no build input
+        run: |
+          npm pack --dry-run --json > /tmp/pack.json
+          if grep -q '"vendor/' /tmp/pack.json; then
+            echo "::error::vendor/ would be published — it is build input, not artifact."
+            exit 1
+          fi
+          for required in skills agents scripts runtime-plugin.json requirements.txt; do
+            if ! grep -q "\"${required}" /tmp/pack.json; then
+              echo "::error::published package is missing ${required}"
+              exit 1
+            fi
+          done
+
+  # The vendored upstream suite, run against *our* tree: it exercises the SSRF
+  # guard, the schema validator, the fetchers, the cost ledgers and the runtime
+  # contract against the code this package actually ships. It only became
+  # meaningful once the tests were staged one level below the repo root, so their
+  # `parents[1]` resolves here instead of to `vendor/claude-seo/`.
+  #
+  # A handful of tests assert the Claude Code layout the port replaces on
+  # purpose; they are deselected by name in tools/upstream-tests.mjs.
+  upstream-suite:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: npm ci
+
+      # The suite imports requests, bs4 and lxml directly, and pins the same
+      # versions the managed runtime uses.
+      - name: Install Python test dependencies
+        run: |
+          python3 -m pip install --quiet --disable-pip-version-check \
+            pytest requests beautifulsoup4 lxml
+
+      - name: Vendor and sync
+        run: |
+          node tools/vendor.mjs
+          node tools/sync.mjs
+
+      - name: Run the upstream suite against the shipped tree
+        env:
+          CLAUDE_SEO_PYTHON: python3
+        run: node tools/upstream-tests.mjs
+
+  python-runtime:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # The Active LTS. The Python runtime contract is Node-independent, but
+          # this should still run on the version most users are on.
+          node-version: 24
+          cache: npm
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: npm ci
+
+      - name: Vendor and sync
+        run: |
+          node tools/vendor.mjs
+          node tools/sync.mjs
+
+      # Exercises the real runtime contract offline: package-root resolution,
+      # the requirements fingerprint, and the repo-relative data/ lookup.
+      - name: Provision the managed runtime
+        env:
+          CLAUDE_SEO_DATA_DIR: ${{ runner.temp }}/claude-seo
+        run: ./scripts/claude-seo setup --skip-browser
+
+      - name: Doctor reports ready
+        env:
+          CLAUDE_SEO_DATA_DIR: ${{ runner.temp }}/claude-seo
+        run: |
+          ./scripts/claude-seo doctor --json | tee /tmp/doctor.json
+          python3 -c "import json,sys; d=json.load(open('/tmp/doctor.json')); sys.exit(0 if d['ready'] and d['plugin_version'] != 'unknown' else 1)"
+
+      - name: Bundled script reads its data ledger
+        env:
+          CLAUDE_SEO_DATA_DIR: ${{ runner.temp }}/claude-seo
+        run: ./scripts/claude-seo run seo_updates.py --json | python3 -c "import json,sys; sys.exit(0 if json.load(sys.stdin)['count'] > 0 else 1)"
+
+      - name: Schema hook distinguishes valid from broken markup
+        run: |
+          mkdir -p /tmp/fixture
+          printf '%s' '<html><head><script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"ok","datePublished":"2026-01-01"}</script></head></html>' > /tmp/fixture/good.html
+          printf '%s' '<html><head><script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"[Business Name]"}</script></head></html>' > /tmp/fixture/broken.html
+          python3 scripts/validate_schema_hook.py /tmp/fixture/good.html
+          if python3 scripts/validate_schema_hook.py /tmp/fixture/broken.html; then
+            echo "::error::validator accepted a placeholder-filled schema block"
+            exit 1
+          fi

@@ -1,0 +1,92 @@
+{
+  "name": "claude-seo-pi",
+  "version": "2.4.0",
+  "type": "module",
+  "description": "Comprehensive SEO analysis for the pi and omp coding agents. 33 skills, 20 specialist agents and 50+ Python tools covering technical SEO, content quality (E-E-A-T), schema markup, GEO/AI search, local SEO, backlinks, rank tracking and drift monitoring. Ported from claude-seo.",
+  "keywords": [
+    "pi-package",
+    "omp-package",
+    "omp",
+    "claude-seo",
+    "seo",
+    "technical-seo",
+    "geo",
+    "ai-search",
+    "e-e-a-t",
+    "schema-markup",
+    "local-seo",
+    "backlinks",
+    "core-web-vitals"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ikram-Maulana/claude-seo-pi.git"
+  },
+  "homepage": "https://github.com/Ikram-Maulana/claude-seo-pi#readme",
+  "bugs": {
+    "url": "https://github.com/Ikram-Maulana/claude-seo-pi/issues"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/seo-setup.ts",
+      "./extensions/seo-schema-validator.ts"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "subagents": {
+      "agents": [
+        "./agents"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "pi-subagents": ">=0.66.0"
+  },
+  "peerDependenciesMeta": {
+    "pi-subagents": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "vendor": "node tools/vendor.mjs",
+    "sync": "node tools/sync.mjs",
+    "verify": "node tools/verify.mjs",
+    "secrets": "node tools/scan-secrets.mjs",
+    "test": "node --test \"tests/*.test.mjs\"",
+    "test:upstream": "node tools/upstream-tests.mjs",
+    "check": "node tools/verify.mjs && npm run secrets && npm test",
+    "build": "node tools/vendor.mjs && node tools/sync.mjs && node tools/verify.mjs && npm test"
+  },
+  "files": [
+    "skills/",
+    "agents/",
+    "scripts/",
+    "extensions/",
+    "schema/",
+    "data/",
+    "requirements.txt",
+    "runtime-plugin.json",
+    "README.md",
+    "CONTRIBUTING.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "LICENSE",
+    "!**/__pycache__",
+    "!**/*.pyc"
+  ],
+  "devDependencies": {
+    "yaml": "^2.9.1"
+  }
+}

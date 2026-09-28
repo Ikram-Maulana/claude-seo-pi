@@ -1,0 +1,29 @@
+# Build input: recreated by `npm run vendor`, pinned by vendor/lock.json
+vendor/claude-seo/
+vendor/resolved.json
+vendor/.claude-seo-*.tar.gz
+
+# Managed Python runtime, if it lands inside the tree
+.venv/
+node_modules/
+
+# Staged by tools/upstream-tests.mjs: the vendored suite copied one level below
+# the repo root so its `parents[1]` resolves here, plus the symlink that points
+# the schema-hook tests at the file we actually ship.
+#
+# The hooks/ entry names the one file the harness creates rather than the whole
+# directory. A bare `hooks/` would also silently swallow a real hooks/ directory
+# if one is ever added — and the port has no way to notice, because the ignore
+# rule would keep it out of git status entirely.
+tests-upstream/
+tests/fixtures/
+/hooks/validate-schema.py
+
+# Python bytecode. scripts/ ships 61 Python files and the launcher imports them
+# in place, so __pycache__ appears next to them on first run. Without this it is
+# committed and packed into the tarball.
+__pycache__/
+*.py[cod]
+
+*.log
+.DS_Store

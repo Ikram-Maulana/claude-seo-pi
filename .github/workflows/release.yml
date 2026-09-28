@@ -1,0 +1,153 @@
+name: release
+
+# A release is a decision about which upstream tag to ship, not a side effect of
+# a merge: the tree is generated from vendor/, so publishing is deliberate and
+# tag-triggered. npm is the only registry involved — pi and omp both install from
+# npm and read the manifest out of the published tarball, so one publish serves
+# all three. pi.dev and omp.sh render their listings from npm metadata; there is
+# nothing to publish to them.
+on:
+  push:
+    tags: ["v*"]
+
+# Read-only by default. The publish job elevates itself to `id-token: write`,
+# which is the only permission trusted publishing needs.
+permissions:
+  contents: read
+
+jobs:
+  # Everything cheap, in the order that fails fastest. A mistagged release dies
+  # on the version check before the suite below spends a runner on it.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # The Active LTS. Node 24 bundles npm 11.x, which clears the floor for
+          # trusted publishing (npm >= 11.5.1, Node >= 22.14.0).
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Install build dependencies
+        run: npm ci
+
+      # Reproduces the committed tree from the pinned upstream tag. This is the
+      # only place the checksum in vendor/lock.json is verified: vendor/ is
+      # gitignored, so a bad pin never reaches review.
+      - name: Vendor and sync
+        run: |
+          node tools/vendor.mjs
+          node tools/sync.mjs
+
+      # sync.mjs derives the version from upstream's plugin.json, so the version
+      # is not chosen here — it is inherited. A tag that disagrees would publish
+      # a version nobody tagged, or fail as a duplicate after the tag is already
+      # public and immutable.
+      - name: Assert the tag matches package.json
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          version=$(npm pkg get version | tr -d '"')
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag v$tag does not match package.json version $version"
+            exit 1
+          fi
+          echo "releasing $version"
+
+      - name: Verify structure
+        run: node tools/verify.mjs
+
+      - name: Unit tests
+        run: node --test 'tests/*.test.mjs'
+
+      - name: Scan for credential-shaped strings
+        run: node tools/scan-secrets.mjs
+
+      # The generated tree is committed so a git-source install works without a
+      # build step. If sync produced a different tree than the one committed, the
+      # tarball would not match the tag it claims to be.
+      - name: Assert the committed tree matches the sync output
+        run: |
+          if ! git diff --exit-code --stat; then
+            echo "::error::Generated tree is out of date. Run 'npm run build' and commit the result."
+            exit 1
+          fi
+
+  # The vendored upstream suite, run against the tree about to be published. It
+  # exercises the SSRF guard, the schema validator, the fetchers and the cost
+  # ledgers — the runtime behaviour `verify` cannot see. It is the last gate
+  # before an irreversible publish.
+  upstream-suite:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: npm ci
+
+      # The suite imports requests, bs4 and lxml directly, and pins the same
+      # versions the managed runtime uses.
+      - name: Install Python test dependencies
+        run: |
+          python3 -m pip install --quiet --disable-pip-version-check \
+            pytest requests beautifulsoup4 lxml
+
+      - name: Vendor and sync
+        run: |
+          node tools/vendor.mjs
+          node tools/sync.mjs
+
+      - name: Run the upstream suite against the shipped tree
+        env:
+          CLAUDE_SEO_PYTHON: python3
+        run: node tools/upstream-tests.mjs
+
+  publish:
+    needs: [verify, upstream-suite]
+    runs-on: ubuntu-latest
+    # Trusted publishing exchanges this OIDC token for a short-lived publish
+    # credential, so no NPM_TOKEN is stored anywhere.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          # npm's own guidance for release builds: a restored cache is a build
+          # input an attacker can poison, and the tarball it produced would still
+          # carry a valid provenance attestation for the wrong bytes.
+          package-manager-cache: false
+
+      - name: Install build dependencies
+        run: npm ci
+
+      # Each job gets a fresh checkout, so the generated tree is rebuilt here.
+      # `verify` already asserted the committed tree equals this output, so the
+      # bytes published are the bytes that passed the gates above.
+      - name: Vendor and sync
+        run: |
+          node tools/vendor.mjs
+          node tools/sync.mjs
+
+      # No token: npm detects the OIDC environment and exchanges the GitHub
+      # token for a short-lived publish credential. Provenance is generated
+      # automatically under trusted publishing; the flag is passed anyway so the
+      # supply-chain property fails loudly rather than regressing silently. It is
+      # deliberately absent from publishConfig, which would force provenance on
+      # every local publish too and break the one-time bootstrap release.
+      - name: Publish
+        run: npm publish --provenance
