@@ -4,7 +4,7 @@ on:
   push:
     # verify.mjs checks this against the repository's live branch, so a name
     # that does not match skips every push silently.
-    branches: [main]
+    branches: [main, development]
   pull_request:
 
 jobs:

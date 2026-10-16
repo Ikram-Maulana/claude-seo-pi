@@ -544,7 +544,9 @@ try {
       stdio: ["ignore", "pipe", "ignore"],
     })
   );
-  const paths = (packed[0]?.files ?? []).map((f) => f.path);
+  // npm 12 keys the JSON by package name instead of returning an array.
+  const entry = Array.isArray(packed) ? packed[0] : Object.values(packed)[0];
+  const paths = (entry?.files ?? []).map((f) => f.path);
   const bytecode = paths.filter((p) => p.includes("__pycache__") || p.endsWith(".pyc"));
   if (bytecode.length > 0) {
     fail(
