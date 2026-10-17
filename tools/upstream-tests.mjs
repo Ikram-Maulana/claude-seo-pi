@@ -93,17 +93,39 @@ const DESELECTED = [
   // ── The body rewrite replaces "call WebFetch" with the packaged fetcher ──
   "test_sync_flow.py::test_agent_has_untrusted_webfetch_rule",
   // ── `maxTurns` is a Claude Code field with no pi-subagents equivalent ──
-  "test_audit_agent_turn_budget.py",
+  "test_audit_agent_turn_budget.py::test_every_audit_agent_has_a_turn_budget_at_least_30",
+  "test_audit_agent_turn_budget.py::test_named_reporters_agents_have_at_least_40_turns",
+  "test_audit_agent_turn_budget.py::test_dataforseo_extension_mirror_also_has_the_early_write_instruction",
   "test_agent_untrusted_content.py::test_fifteen_agents_ingest_external_content",
   // ── Upstream repository files are not part of the published package ──
   // `.claude-plugin/`, `docs/`, `CLAUDE.md`, `AGENTS.md` and `pyproject.toml` do
-  // not exist here, so the tests that read them are listed individually.
-  "test_manifest_consistency.py",
+  // not exist here, so the tests that read them are listed individually. The
+  // files below also hold tests that pass against this tree (the portability
+  // lint, the requirements floors), which is why none of them is listed whole.
+  "test_manifest_consistency.py::test_plugin_json_skill_count_matches_disk",
+  "test_manifest_consistency.py::test_plugin_json_description_fits_registry_limit",
+  "test_manifest_consistency.py::test_plugin_json_subagent_count_matches_disk",
+  "test_manifest_consistency.py::test_marketplace_json_skill_count_matches_plugin_json",
+  "test_manifest_consistency.py::test_marketplace_json_subagent_count_matches_plugin_json",
+  "test_manifest_consistency.py::test_canonical_phrasing_in_user_visible_docs",
+  "test_manifest_consistency.py::test_version_triangulation",
+  "test_manifest_consistency.py::test_pyproject_version_matches_plugin_json",
+  "test_manifest_consistency.py::test_install_scripts_default_tag_matches_plugin_version",
+  "test_manifest_consistency.py::test_orchestrator_sub_skills_list_matches_disk",
+  "test_manifest_consistency.py::test_orchestrator_subagents_list_matches_disk",
+  "test_manifest_consistency.py::test_skill_metadata_versions_match_plugin_json",
+  "test_manifest_consistency.py::test_marketplace_metadata_and_author_parity",
+  "test_manifest_consistency.py::test_canonical_math_adds_up",
+  "test_manifest_consistency.py::test_script_count_claims_match_tracked_scripts",
+  "test_manifest_consistency.py::test_claude_md_script_inventory_lists_every_tracked_script",
   "test_consistency_check.py::test_no_consistency_errors",
   "test_consistency_check.py::test_checker_scans_whole_tree",
   "test_contributors.py",
-  "test_portability.py",
-  "test_pyproject_metadata.py",
+  "test_portability.py::test_agents_md_covers_all_target_platforms",
+  "test_portability.py::test_agents_md_documents_portability_check",
+  "test_portability.py::test_agents_md_tool_mapping_table_includes_codex_cline_aider",
+  "test_pyproject_metadata.py::test_pyproject_has_authors_and_keywords",
+  "test_pyproject_metadata.py::test_pyproject_has_minimal_ruff_config_only",
   "test_google_api_key_safety.py::test_mcp_docs_do_not_show_google_query_key_examples",
 ];
 
@@ -208,6 +230,17 @@ if (process.argv.includes("--verbose")) {
 }
 
 /**
+ * Count the test ids `--collect-only -q` printed.
+ *
+ * The summary line is not usable: with `--deselect` pytest prints
+ * `984/985 tests collected (1 deselected)`, and a `(\d+) tests collected`
+ * pattern reads the denominator, so every deselected test went uncounted.
+ */
+function countCollected(output) {
+  return output.split("\n").filter((line) => /^\S+::\S/.test(line)).length;
+}
+
+/**
  * How many tests the DESELECTED list actually removes.
  *
  * Measured by asking pytest to collect twice — once unrestricted, once with the
@@ -228,10 +261,9 @@ function deselectedTestCount() {
         ],
         { cwd: repoRoot, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }
       );
-      return Number(/(\d+) tests? collected/.exec(out)?.[1] ?? 0);
+      return countCollected(out);
     } catch (error) {
-      const out = `${error.stdout ?? ""}${error.stderr ?? ""}`;
-      return Number(/(\d+) tests? collected/.exec(out)?.[1] ?? 0);
+      return countCollected(`${error.stdout ?? ""}${error.stderr ?? ""}`);
     }
   };
 

@@ -376,6 +376,14 @@ test("the documented upstream-suite count matches what the harness reports", () 
     /--collect-only/,
     "the harness no longer measures the counts it reports — the documented number can drift again"
   );
+  // pytest prints `854/897 tests collected (43 deselected)` once anything is
+  // deselected, so a `(\d+) tests collected` pattern reads the denominator and
+  // the deselected tests go uncounted. The harness must count the test ids.
+  assert.doesNotMatch(
+    harness,
+    /tests\?\s+collected/,
+    "the harness parses pytest's summary line, which misreports once tests are deselected"
+  );
   assert.ok(
     total > 900,
     `CONTRIBUTING.md says the suite has ${total} tests; upstream ships ~962, so this looks stale`

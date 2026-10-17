@@ -123,7 +123,7 @@ It needs `pytest`, `requests`, `beautifulsoup4` and `lxml`:
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install pytest requests beautifulsoup4 lxml google-auth
-npm run test:upstream        # 897 of 985 upstream tests
+npm run test:upstream        # 865 of 985 upstream tests
 ```
 
 The harness finds the interpreter via `CLAUDE_SEO_PYTHON`, then `.venv/bin/python`,
