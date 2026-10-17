@@ -87,10 +87,10 @@ When the user invokes `/seo audit`, delegate to subagents in parallel:
 6. If local business detected AND DataForSEO MCP available, also spawn seo-maps agent
 7. If backlink APIs detected (`"$SEO_PLUGIN_ROOT/scripts/claude-seo" run backlinks_auth.py --check`), also spawn seo-backlinks agent
 8. If Firecrawl MCP available, use `firecrawl_map` to discover all site URLs before analysis
-9. If content strategy signals detected (blog, pillar pages, topic clusters), also spawn seo-cluster agent
+9. If content strategy signals detected (blog, pillar pages, topic clusters), also spawn seo-cluster agent, passing in its task the top-10 organic results for the seed and each candidate keyword from your web search (on pi the agent has no search tool)
 10. If e-commerce detected, also spawn seo-ecommerce agent
 11. If drift baseline exists for this URL (`"$SEO_PLUGIN_ROOT/scripts/claude-seo" run drift_history.py <url>`), also spawn seo-drift agent
-12. Always include seo-sxo in full audits (search experience applies to all sites)
+12. Always include seo-sxo in full audits (search experience applies to all sites), passing in its task the top-10 organic results and SERP features for the target keyword from your web search (on pi the agent has no search tool)
 13. Collect results and generate unified report with SEO Health Score (0-100)
 14. **Synthesize via the 10-principle framework** (see "Synthesis Methodology" below), walk PERCEIVE → ANALYZE → VALIDATE → ACT before bucketing findings into Critical / High / Medium / Low
 15. Create prioritized action plan with dependency sequencing + falsifiability per recommendation
@@ -300,7 +300,7 @@ For parallel analysis during audits:
 - `seo-sxo` -- Page-type mismatch, user stories, persona scoring (always in full audits)
 - `seo-drift` -- Baseline comparison (conditional: drift baseline exists for URL)
 - `seo-ecommerce` -- Product schema, marketplace intel (conditional: e-commerce detected)
-- `seo-flow` -- FLOW framework prompts (conditional: spawned for content strategy workflows)
+- `seo-flow` -- FLOW framework prompts (conditional: spawned for content strategy workflows; pass the fetched target page in its task, since on pi it has no fetch tool)
 - `seo-dataforseo` -- Live SERP, keyword, backlink, local SEO data (extension, optional)
 - `seo-image-gen` -- SEO image audit and generation plan (extension, optional)
 

@@ -96,19 +96,61 @@ function interpreter(): Promise<Interpreter | null> {
   return probed;
 }
 
-/** Pull the written path out of the tool arguments across pi/omp tool shapes. */
-function writtenPath(input: unknown): string | undefined {
+/** apply_patch file headers; `Delete File` writes nothing, so it is not listed. */
+const PATCH_HEADER = /^\*\*\* (Add File|Update File|Move to): (.+)$/;
+
+/**
+ * The paths an apply_patch body writes. `Move to` follows the `Update File` it
+ * renames, and the content then lives at the move target, not the old path.
+ */
+function patchPaths(patch: string): string[] {
+  const paths: string[] = [];
+  for (const raw of patch.split("\n")) {
+    const match = PATCH_HEADER.exec(raw.replace(/\r$/, ""));
+    if (!match) {
+      continue;
+    }
+    const [, kind, path] = match;
+    const target = path.trim();
+    if (!target) {
+      continue;
+    }
+    if (kind === "Move to" && paths.length > 0) {
+      paths[paths.length - 1] = target;
+    } else if (kind !== "Move to") {
+      paths.push(target);
+    }
+  }
+  return paths;
+}
+
+/**
+ * Every path a tool call wrote, across pi/omp tool shapes: the single path
+ * keys, omp's `paths` array (a hashline edit of several files carries no
+ * `path`), and the file headers of an apply_patch `input`.
+ */
+function writtenPaths(input: unknown): string[] {
   if (!input || typeof input !== "object") {
-    return undefined;
+    return [];
   }
   const record = input as Record<string, unknown>;
+  const paths: string[] = [];
   for (const key of ["path", "file_path", "filePath", "filename"]) {
     const value = record[key];
     if (typeof value === "string" && value) {
-      return value;
+      paths.push(value);
     }
   }
-  return undefined;
+  if (Array.isArray(record.paths)) {
+    paths.push(...record.paths.filter((value): value is string => typeof value === "string" && value.length > 0));
+  }
+  for (const key of ["input", "_input"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.includes("*** ")) {
+      paths.push(...patchPaths(value));
+    }
+  }
+  return paths;
 }
 
 /** Resolve a tool path the way the file tools do: `@` prefix, `~`, then cwd. */
@@ -180,29 +222,34 @@ export default function seoSchemaValidator(pi: ExtensionAPI) {
     if (!["edit", "write"].includes(event.toolName) || event.isError) {
       return undefined;
     }
-    const raw = writtenPath(event.input);
-    if (!raw) {
-      return undefined;
-    }
-    const file = absolutePath(raw, ctx?.cwd || process.cwd());
-    if (!schemaBearing(file)) {
+    const cwd = ctx?.cwd || process.cwd();
+    const files = [...new Set(writtenPaths(event.input).map((raw) => absolutePath(raw, cwd)))].filter(schemaBearing);
+    if (files.length === 0) {
       return undefined;
     }
 
-    let output: string;
-    try {
-      output = await findings(file);
-    } catch (error) {
-      console.error(`[seo-schema] validator failed: ${(error as Error).message}`);
-      return undefined;
+    // One block per file, each naming it: a multi-file edit can touch several
+    // pages, and one file's crash must not drop the others' findings.
+    const blocks: string[] = [];
+    for (const file of files) {
+      let output: string;
+      try {
+        output = await findings(file);
+      } catch (error) {
+        console.error(`[seo-schema] validator failed on ${file}: ${(error as Error).message}`);
+        continue;
+      }
+      if (output) {
+        blocks.push(`[seo-schema] ${file}: ${output}`);
+      }
     }
-    if (!output) {
+    if (blocks.length === 0) {
       return undefined;
     }
     // pi drops structuredContent when content alone is replaced, so hand it
     // back; omp's event has none, and the key stays absent there.
     return {
-      content: [...(event.content ?? []), { type: "text", text: `[seo-schema] ${output}` }],
+      content: [...(event.content ?? []), ...blocks.map((text) => ({ type: "text" as const, text }))],
       ...(event.structuredContent !== undefined && { structuredContent: event.structuredContent }),
     };
   });

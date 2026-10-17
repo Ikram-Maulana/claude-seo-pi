@@ -17,7 +17,7 @@ are first-class.
 
 - Run the profound setup section in the README.
 - Profound API key.
-- Before any tool call, check that `PROFOUND_API_KEY` is set in the environment (your shell, or the runtime's settings `env` block).
+- Before any tool call, check that `PROFOUND_API_KEY` is set in the environment pi/omp is launched from (e.g. exported in your shell profile).
 
 ## Routing
 

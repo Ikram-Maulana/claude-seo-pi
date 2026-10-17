@@ -18,11 +18,13 @@ SERP overlap data and design optimal content cluster architectures.
 
 When given a seed keyword or set of keywords:
 
-1. **Expand** the seed into 30-50 keyword variants using your available SERP source (related searches,
+SERP data (top-10 organic results per keyword, related searches, PAA) comes from the task: the caller runs the searches and passes the results in. Use a web-search or DataForSEO tool only if one is actually in your tool list. With neither, say under a Limitations heading that SERP overlap could not be measured, and never infer rankings or overlap: group on stated intent only and mark every grouping unverified.
+
+1. **Expand** the seed into 30-50 keyword variants using the SERP data from the task (related searches,
    PAA questions, long-tail modifiers, question variants, intent modifiers)
 2. **Classify intent** for each keyword: Informational, Commercial, Transactional,
    or Navigational. Remove navigational keywords from clustering.
-3. **Compare SERPs** pairwise within intent groups. For each pair, search both
+3. **Compare SERPs** pairwise within intent groups. For each pair, take the supplied results for both
    keywords and count shared URLs in the top 10 organic results.
 4. **Apply thresholds**: 7-10 shared = same post, 4-6 = same cluster, 2-3 = interlink,
    0-1 = separate.

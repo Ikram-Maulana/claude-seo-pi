@@ -13,7 +13,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { frontmatterOf, parseFrontmatter } from "../tools/frontmatter.mjs";
-import { convertAgent, portVersion } from "../tools/sync.mjs";
+import { convertAgent, portVersion, rewritePlaceholders } from "../tools/sync.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (...parts) => readFileSync(join(repoRoot, ...parts), "utf-8");
@@ -188,4 +188,65 @@ test("the skill merge leaves the vendored tree as the archive shipped it", () =>
   const core = readdirSync(join(repoRoot, "vendor", "claude-seo", "skills", "seo-image-gen", "references"));
   const shipped = new Set(readdirSync(join(repoRoot, "skills", "seo-image-gen", "references")));
   assert.deepEqual(core.filter((file) => !shipped.has(file)), [], "the merged skill lost core references");
+});
+
+test("the merged seo-image-gen references are the banana copies its SKILL.md was written against", () => {
+  // Upstream's banana installer copies extensions/banana/references/ next to
+  // the extension SKILL.md. Five of those nine differ from the older core
+  // copies, and the merge once shipped the core ones.
+  const bananaRefs = join(repoRoot, "vendor", "claude-seo", "extensions", "banana", "references");
+  const files = readdirSync(bananaRefs);
+  assert.ok(files.length > 0, "the vendored banana references are gone");
+  for (const file of files) {
+    // Shipped text goes through the same placeholder and WebSearch rewrites.
+    const expected = rewritePlaceholders(readFileSync(join(bananaRefs, file), "utf-8")).replace(/\bWebSearch\b/g, "web search");
+    assert.equal(read("skills", "seo-image-gen", "references", file), expected, `references/${file} is not the banana copy`);
+  }
+});
+
+test("an agent without bash is never told to run the packaged launcher", () => {
+  // seo-flow holds read, find and grep; an instruction to run
+  // scripts/claude-seo sent it after a tool it does not have.
+  for (const [name, values] of Object.entries(agents())) {
+    const tools = String(values.tools ?? "").split(",").map((t) => t.trim());
+    if (tools.includes("bash")) {
+      continue;
+    }
+    assert.doesNotMatch(read("agents", `${name}.md`), /scripts\/claude-seo/, `${name} has no bash but is told to run the launcher`);
+  }
+});
+
+test("seo-flow reads its prompts from a path read can open", () => {
+  // `read` does not expand environment variables, so a `$SEO_PLUGIN_ROOT/…`
+  // path is a file that does not exist.
+  const body = read("agents", "seo-flow.md");
+  assert.doesNotMatch(body, /\$SEO_PLUGIN_ROOT/);
+  assert.match(body, /`references\/prompts\/\{stage\}\/` directory of the `seo-flow` skill/);
+});
+
+test("the SERP agents are told where their SERP data comes from and not to invent it", () => {
+  for (const name of ["seo-sxo", "seo-cluster"]) {
+    const body = read("agents", `${name}.md`);
+    assert.match(body, /from the task/, `${name} is not told the caller supplies the SERP data`);
+    assert.match(body, /never infer rankings/, `${name} may fabricate SERP results`);
+  }
+});
+
+test("no shipped skill or agent points at a settings env block neither host has", () => {
+  const pattern = /settings `?env`? block|env block/i;
+  const offenders = [];
+  for (const root of ["skills", "agents"]) {
+    const walk = (path) => {
+      for (const entry of readdirSync(path, { withFileTypes: true })) {
+        const full = join(path, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (entry.name.endsWith(".md") && pattern.test(readFileSync(full, "utf-8"))) {
+          offenders.push(full.slice(repoRoot.length + 1));
+        }
+      }
+    };
+    walk(join(repoRoot, root));
+  }
+  assert.deepEqual(offenders, []);
 });

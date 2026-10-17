@@ -51,13 +51,19 @@ no built-in web fetch or search tool, so `WebFetch`/`WebSearch` are dropped.
 omp does have `web_search`, but one agent file serves both hosts, and
 pi-subagents checks every allowlisted name against pi's registry before the
 first turn and fails the run on a missing one: granting it would break the
-agent on pi. The
-agents that referenced them — `seo-cluster`, `seo-flow`, `seo-geo`, `seo-local`,
-`seo-maps`, `seo-sxo` — can still fetch, via the Python fetchers or an MCP
-server; they just do not get a tool grant they cannot use. Their **prose** is
-rewritten too: an instruction to "call WebFetch" now names the packaged
-`fetch_page.py` fetcher or a web-fetch MCP tool, so the body never points at a
-tool the agent does not have.
+agent on pi. Of
+the agents that referenced them, `seo-geo`, `seo-local` and `seo-maps` hold
+`bash` and fetch through the packaged Python fetchers. `seo-flow` holds only
+`read`, `find` and `grep`, so it works on the page the caller fetched and passed
+in its task, and says so when none was passed. `seo-sxo` and `seo-cluster` have
+`bash`, but no SERP script exists, so their SERP data comes from the task too:
+the `seo` and `seo-audit` orchestrators tell the parent, which can search, to
+pass the top-10 results when it spawns them. They use a web-search or
+DataForSEO tool only if one is in their tool list, and otherwise report SERP
+analysis as a limitation rather than infer rankings. Their **prose** is
+rewritten to match (`BODY_REWRITES`), so the body never points at a tool the
+agent does not have; a test fails if an agent without `bash` is told to run
+the launcher.
 
 **Skill prose is rewritten the same way.** Skills are read by the parent model,
 which on pi has no `WebFetch`, no `WebSearch` and no `~/.claude/settings.json`.
@@ -125,10 +131,14 @@ fails rather than dropping agents silently.
 
 **Two skills merge rather than overwrite.** `seo-dataforseo` and `seo-image-gen`
 exist both as a core skill and as an extension skill, and the two copies are not
-identical. The extension copy is newer but, for `seo-image-gen`, ships no
-`references/` directory while its `SKILL.md` instructs the model to read seven
-files from it. The sync takes the newer `SKILL.md` and unions the reference
-trees, so instructions never point at missing files.
+identical. The extension `SKILL.md` is newer. For `seo-image-gen` its
+references are not in the skill directory: upstream's banana installer copies
+`extensions/banana/references/` next to it, and five of those nine files differ
+from the older core copies. The sync takes the extension `SKILL.md`, then fills
+`references/` in order of precedence: the extension's top-level `references/`,
+the extension skill's own, and the core copy only for a file neither has. The
+references then match the `SKILL.md` that ships, and instructions never point
+at missing files.
 
 **The managed venv is pinned to a per-user directory.** Upstream's `_is_plugin()`
 probe relies on `.claude-plugin/`, which this port strips, so without an override
@@ -201,9 +211,10 @@ latest`); npm refuses to publish a prerelease without one.
 Releases are cut by maintainers: pushing a `v*` tag starts `release.yml`, whose
 `publish` job then waits for approval in the `npm-release` environment before it
 publishes to npm. The tag is `v` plus the `package.json` version, for example
-`v2.4.2-pi.1`. The environment's required reviewer and the `v*` tag
+`v2.4.2-pi.1`. The environment's required reviewer, its deployment policy
+(tags matching `v*` only, so no branch run can deploy to it) and the `v*` tag
 ruleset live in repository settings, not in the tree, so a fork that wants the
-same gate has to recreate both; if npm's trusted-publisher entry names an
+same gate has to recreate all three; if npm's trusted-publisher entry names an
 environment, it must be `npm-release`.
 
 ### The vendored upstream suite
@@ -264,6 +275,12 @@ the Active LTS — so a change that breaks either is caught rather than assumed.
 The package ships **no runtime dependencies** — pi installs it with peer
 auto-install suppressed, and the bundled Python imports no npm package. The one
 devDependency (`yaml`) is a *build* input: `tools/` is not published.
+
+The four `@earendil-works/*` host peers are `"*"` and **optional**
+(`peerDependenciesMeta`). npm 7+ and Bun install a required peer, so an omp or
+Bun install pulled about 150 MB of the pi host it never loads. The extensions
+import the host with `import type` only, so nothing needs the peers installed;
+`verify` and `tests/tree.test.mjs` require the flag.
 
 `.npmrc` sets `legacy-peer-deps` so `npm ci` does not resolve the `"*"` host
 peers from the registry — without it npm installs 266 packages, including the

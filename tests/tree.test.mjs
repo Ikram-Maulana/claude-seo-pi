@@ -466,7 +466,7 @@ test("CLAUDE.md stays a bridge rather than a second source of truth", () => {
   );
 });
 
-test("host packages are peers, never dependencies", () => {
+test("host packages are optional peers, never dependencies", () => {
   // A physical copy in dependencies can bypass pi's extension module mapping
   // and create duplicate registries.
   const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf-8"));
@@ -479,6 +479,9 @@ test("host packages are peers, never dependencies", () => {
   for (const host of hosts) {
     assert.equal(pkg.dependencies?.[host], undefined, `${host} must not be a dependency`);
     assert.equal(pkg.peerDependencies?.[host], "*", `${host} must be a "*" peer`);
+    // npm 7+ and Bun install a required peer: on omp that pulled ~150 MB of
+    // the pi host into an install that never loads it.
+    assert.equal(pkg.peerDependenciesMeta?.[host]?.optional, true, `${host} must be an optional peer`);
   }
   // pi-subagents is a second pi package: a bundled copy would install but never
   // register, and could shadow the user's own install.

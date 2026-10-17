@@ -184,7 +184,9 @@ function main() {
   }
 
   // pi requires host packages in peerDependencies with "*"; listing them in
-  // dependencies produces duplicate module instances.
+  // dependencies produces duplicate module instances. They must also be
+  // optional: npm 7+ and Bun install a required peer, and on omp, which is not
+  // one of these packages, that pulled ~150 MB of pi into every install.
   for (const host of [
     "@earendil-works/pi-coding-agent",
     "@earendil-works/pi-ai",
@@ -193,10 +195,12 @@ function main() {
   ]) {
     if (pkg.dependencies?.[host]) {
       fail(`host package ${host} is in dependencies`, "move it to peerDependencies");
-    } else if (pkg.peerDependencies?.[host] === "*") {
-      ok(`peerDependencies pins ${host} to "*"`);
-    } else {
+    } else if (pkg.peerDependencies?.[host] !== "*") {
       fail(`peerDependencies is missing ${host} with "*"`);
+    } else if (pkg.peerDependenciesMeta?.[host]?.optional === true) {
+      ok(`peerDependencies pins ${host} to "*", optional`);
+    } else {
+      fail(`host peer ${host} is not optional`, "set peerDependenciesMeta optional: an omp or Bun install would pull the pi host in");
     }
   }
 

@@ -506,7 +506,109 @@ test(
   }
 );
 
-test("the schema validator skips a failed write and a path that does not exist", { skip: skip || NO_POSIX_STUB }, async () => {
+/**
+ * Write the given files into a fresh dir, run one edit event through a
+ * validator backed by a stub Python, and return what the hook was run on.
+ *
+ * The stub crashes (exit 1) on a file whose name contains "crash", reports a
+ * critical finding naming the file otherwise, so each block can be traced to
+ * the file it belongs to.
+ */
+async function multiFileRun(files, input) {
+  const dir = mkdtempSync(join(tmpdir(), "seo-schema-multi-"));
+  try {
+    for (const [name, body] of Object.entries(files)) {
+      writeFileSync(join(dir, name), body);
+    }
+    const log = join(dir, "calls.log");
+    const stub = join(dir, "python");
+    writeFileSync(
+      stub,
+      [
+        "#!/bin/sh",
+        `if [ "$1" = "-c" ]; then echo /stub/python; exit 0; fi`,
+        `echo "$2" >> '${log}'`,
+        `case "$2" in *crash*) echo "Traceback: boom" >&2; exit 1;; esac`,
+        `echo "critical in $(basename "$2")" >&2`,
+        "exit 2",
+        "",
+      ].join("\n")
+    );
+    chmodSync(stub, 0o755);
+    return await withEnv({ CLAUDE_SEO_PYTHON: stub }, async () => {
+      const handler = await freshValidator();
+      const { result, lines } = await capture(() =>
+        handler({ ...writeEvent(input), toolName: "edit" }, { cwd: dir })
+      );
+      const validated = existsSync(log)
+        ? readFileSync(log, "utf-8").trim().split("\n").map((line) => line.slice(dir.length + 1))
+        : [];
+      return { result, lines, validated, blocks: (result?.content ?? []).slice(1).map((c) => c.text) };
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("an omp hashline edit of one file is validated once", { skip: skip || NO_POSIX_STUB }, async () => {
+  // omp sets `path` and `paths` together when a hashline edit names one file.
+  const { validated, blocks } = await multiFileRun(
+    { "a.html": PLACEHOLDER_PAGE },
+    { input: "[a.html#1a2b]\n…", path: "a.html", paths: ["a.html"] }
+  );
+  assert.deepEqual(validated, ["a.html"], "the same file was validated more than once");
+  assert.equal(blocks.length, 1);
+});
+
+test("an omp hashline edit of several files validates each schema-bearing one", { skip: skip || NO_POSIX_STUB }, async () => {
+  // With more than one file omp sends `paths` alone, and no `path` key.
+  const { validated } = await multiFileRun(
+    { "a.html": PLACEHOLDER_PAGE, "b.css": "body { color: red }" },
+    { input: "[a.html#1a2b]\n…\n[b.css#3c4d]\n…", paths: ["a.html", "b.css"] }
+  );
+  assert.deepEqual(validated, ["a.html"], "the paths array was not read, or a stylesheet was validated");
+});
+
+test("an apply_patch edit validates added files and move targets, not moved-away or deleted ones", { skip: skip || NO_POSIX_STUB }, async () => {
+  const patch = [
+    "*** Begin Patch",
+    "*** Update File: x.html",
+    "*** Move to: y.html",
+    "@@",
+    "-old",
+    "+new",
+    "*** Add File: z.html",
+    "+<p>new</p>",
+    "*** Add File: gone.html",
+    "+<p>never written</p>",
+    "*** Delete File: d.html",
+    "*** End Patch",
+    "",
+  ].join("\n");
+  const { validated, blocks } = await multiFileRun(
+    // x.html and d.html still exist and carry JSON-LD, so skipping them is the
+    // header logic, not the sniff; gone.html is missing and skipped.
+    { "x.html": PLACEHOLDER_PAGE, "y.html": PLACEHOLDER_PAGE, "z.html": PLACEHOLDER_PAGE, "d.html": PLACEHOLDER_PAGE },
+    { input: patch }
+  );
+  assert.deepEqual(validated, ["y.html", "z.html"]);
+  assert.equal(blocks.length, 2);
+});
+
+test("findings from several files arrive one block per file, and a crash drops only its own", { skip: skip || NO_POSIX_STUB }, async () => {
+  const { result, blocks, lines } = await multiFileRun(
+    { "a.html": PLACEHOLDER_PAGE, "crash.html": PLACEHOLDER_PAGE, "b.html": PLACEHOLDER_PAGE },
+    { paths: ["a.html", "crash.html", "b.html"] }
+  );
+  assert.deepEqual(result.content[0], { type: "text", text: "Wrote file" }, "the tool's own output must be kept");
+  assert.equal(blocks.length, 2, "expected one block per file with findings");
+  assert.match(blocks[0], /^\[seo-schema\] \S*a\.html: critical in a\.html/);
+  assert.match(blocks[1], /^\[seo-schema\] \S*b\.html: critical in b\.html/);
+  assert.equal(lines.length, 1, "the crash must log one diagnostic");
+  assert.match(lines[0], /crashed on \S*crash\.html/);
+});
+
+test("the schema validator skips a failed write and a path that does not exist",{ skip: skip || NO_POSIX_STUB }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "seo-schema-skip-"));
   try {
     const page = join(dir, "page.html");

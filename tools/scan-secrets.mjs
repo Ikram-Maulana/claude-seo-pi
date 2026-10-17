@@ -57,14 +57,18 @@ export const PATTERNS = [
     // An unquoted `.env` / shell assignment. Restricted to SHOUTING_CASE names
     // whose value holds a digit, so `token = some_long_identifier` in code does
     // not trip it. The prefix is optional: a bare `API_KEY=` or `TOKEN=` counts.
+    // A base64 value (an AWS secret access key) counts on the quoted rule's
+    // terms, mixed case plus a digit, so `TOKEN_PATH=/usr/local/…` does not;
+    // a trailing ` # comment` does not hide the line.
     "unquoted env secret",
-    /^[ \t]*(?:export[ \t]+)?(?:[A-Z][A-Z0-9_]*)?(?:API_KEY|SECRET|PASSWORD|TOKEN)[A-Z0-9_]*=(?<value>(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{20,})[ \t]*$/gm,
+    /^[ \t]*(?:export[ \t]+)?(?:[A-Z][A-Z0-9_]*)?(?:API_KEY|SECRET|PASSWORD|TOKEN)[A-Z0-9_]*=(?<value>(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{20,}|(?=[A-Za-z0-9_\-+/=]*[A-Z])(?=[A-Za-z0-9_\-+/=]*[a-z])(?=[A-Za-z0-9_\-+/=]*\d)[A-Za-z0-9_\-+/=]{20,})(?:[ \t]+#.*)?[ \t]*$/gm,
   ],
   [
     // The same shape as a YAML mapping entry (`DATAFORSEO_PASSWORD: s3cr…`),
     // which the quoted-literal rule above misses because the value is bare.
+    // Base64 values on the same terms as the env rule.
     "unquoted YAML secret",
-    /^[ \t]*(?:-[ \t]+)?(?:[A-Z][A-Z0-9_]*)?(?:API_KEY|SECRET|PASSWORD|TOKEN)[A-Z0-9_]*:[ \t]+(?<value>(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{20,})[ \t]*(?:#.*)?$/gm,
+    /^[ \t]*(?:-[ \t]+)?(?:[A-Z][A-Z0-9_]*)?(?:API_KEY|SECRET|PASSWORD|TOKEN)[A-Z0-9_]*:[ \t]+(?<value>(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{20,}|(?=[A-Za-z0-9_\-+/=]*[A-Z])(?=[A-Za-z0-9_\-+/=]*[a-z])(?=[A-Za-z0-9_\-+/=]*\d)[A-Za-z0-9_\-+/=]{20,})[ \t]*(?:#.*)?$/gm,
   ],
 ];
 

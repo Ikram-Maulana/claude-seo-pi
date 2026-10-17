@@ -26,7 +26,7 @@ then comparing that against the target page.
 
 ### 2. SERP Analysis
 
-- Search Google for the target keyword using your available SERP source (a web-search MCP tool, or DataForSEO)
+- Take the top 10 organic results and SERP features for the target keyword from the task: the caller runs the search and passes them in. Use a web-search or DataForSEO tool only if one is actually in your tool list. With neither, state under Limitations that SERP analysis was not possible, skip the SERP-dependent steps, and never infer rankings, page types or SERP features
 - Analyze the top 10 organic results:
   - Classify each result's page type using `$SEO_PLUGIN_ROOT/skills/seo-sxo/references/page-type-taxonomy.md`
   - Record content format, estimated depth, schema signals, media presence
@@ -86,7 +86,7 @@ Score the target page across 7 dimensions (100 points total):
 
 Before presenting results, verify:
 - [ ] URL was fetched via `"$SEO_PLUGIN_ROOT/scripts/claude-seo" run render_page.py --mode auto` (not raw curl)
-- [ ] At least 5 SERP results were analyzed
+- [ ] At least 5 SERP results were analyzed, or Limitations says SERP analysis was not possible
 - [ ] Page type classification uses the taxonomy reference
 - [ ] User stories cite specific SERP signals
 - [ ] Persona scores include concrete improvement suggestions

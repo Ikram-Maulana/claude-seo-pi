@@ -14,7 +14,7 @@ Live AI visibility tracking via the SE Ranking REST API.
 
 - Run the seranking setup section in the README (or the package README).
 - An SE Ranking API key (https://seranking.com/api.html).
-- Before any call, verify `SERANKING_API_KEY` is set in the environment (your shell, or the runtime's settings `env` block). If absent, point the user at Environment variables in the README.
+- Before any call, verify `SERANKING_API_KEY` is set in the environment pi/omp is launched from (e.g. exported in your shell profile). If absent, point the user at Environment variables in the README.
 
 ## Routing
 

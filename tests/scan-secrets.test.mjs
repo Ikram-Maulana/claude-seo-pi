@@ -115,6 +115,24 @@ test("an unquoted YAML value is scanned like an env assignment", () => {
   assert.deepEqual(labels("API_KEY: your_api_key_here_1234567\n"), []);
 });
 
+test("an unquoted base64 value is scanned in both the env and YAML forms", () => {
+  // The unquoted rules stopped at the first `/`, `+` or `=`, so an AWS secret
+  // access key pasted into a .env file passed.
+  const aws = `wJal${MIXED.slice(4, 13)}/K7M${MIXED.slice(13, 30)}+x=`;
+  assert.deepEqual(labels(`AWS_SECRET_ACCESS_KEY=${aws}\n`), ["unquoted env secret"]);
+  assert.deepEqual(labels(`export AWS_SECRET_ACCESS_KEY=${aws}\n`), ["unquoted env secret"]);
+  const yaml = `${MIXED.slice(0, 4)}/7Hd${MIXED.slice(4, 24)}+abc=`;
+  assert.deepEqual(labels(`MOZ_SECRET_KEY: ${yaml}\n`), ["unquoted YAML secret"]);
+  // A path has neither mixed case nor a digit, so it stays clean.
+  assert.deepEqual(labels("TOKEN_PATH=/usr/local/share/tokens/file\n"), []);
+  assert.deepEqual(labels("SECRET_DIR: /var/run/secrets/kubernetes/serviceaccount\n"), []);
+});
+
+test("an inline comment does not hide an env assignment", () => {
+  assert.deepEqual(labels(`API_KEY=${MIXED.slice(0, 20)}6bN0qWz # prod\n`), ["unquoted env secret"]);
+  assert.deepEqual(labels(`API_KEY=${MIXED}\t# rotated monthly\n`), ["unquoted env secret"]);
+});
+
 test("scanner leaves placeholders and ordinary code alone", () => {
   assert.deepEqual(labels("OPR_API_KEY=opr_live_xxxxxxxxxxxxxxxx"), []);
   assert.deepEqual(labels('api_key = "your-api-key-goes-here-123"'), []);

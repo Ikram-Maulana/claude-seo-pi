@@ -245,7 +245,7 @@ These integrations need no MCP server, only credentials:
 
 | Integration | Variable | Where |
 |---|---|---|
-| Bing Webmaster + IndexNow | `BING_WEBMASTER_API_KEY`, `INDEXNOW_KEY`, `INDEXNOW_KEY_LOCATION` | your shell env, or the runtime's settings `env` block |
+| Bing Webmaster + IndexNow | `BING_WEBMASTER_API_KEY`, `INDEXNOW_KEY`, `INDEXNOW_KEY_LOCATION` | the environment pi/omp is launched from (e.g. exported in your shell profile) |
 | Profound | `PROFOUND_API_KEY` | same |
 | SE Ranking | `SERANKING_API_KEY` | same |
 | Matomo | `MATOMO_URL`, `MATOMO_API_TOKEN`, `MATOMO_SITE_ID` | same, or `~/.config/claude-seo/matomo.json` (`0600`) |
