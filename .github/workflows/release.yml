@@ -69,7 +69,10 @@ jobs:
       # tarball would not match the tag it claims to be.
       - name: Assert the committed tree matches the sync output
         run: |
-          if ! git diff --exit-code --stat; then
+          # `git diff` ignores untracked files, so a file sync newly emitted (a
+          # skill an upstream bump added) would pass it while missing from git.
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --short
             echo "::error::Generated tree is out of date. Run 'npm run build' and commit the result."
             exit 1
           fi
