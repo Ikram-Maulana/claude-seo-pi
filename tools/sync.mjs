@@ -560,9 +560,13 @@ function main() {
   // 8. runtime.py reads the version from .claude-plugin/plugin.json or
   //    runtime-plugin.json; we strip the former, so ship the latter.
   const upstreamPlugin = join(upstream, ".claude-plugin", "plugin.json");
-  const version = existsSync(upstreamPlugin)
-    ? JSON.parse(readFileSync(upstreamPlugin, "utf-8")).version
-    : "unknown";
+  if (!existsSync(upstreamPlugin)) {
+    throw new Error(".claude-plugin/plugin.json is missing from the vendored tree: cannot derive the version");
+  }
+  const version = JSON.parse(readFileSync(upstreamPlugin, "utf-8")).version;
+  if (typeof version !== "string" || !/^\d+\.\d+\.\d+/.test(version)) {
+    throw new Error(`upstream plugin.json has no usable version (got ${JSON.stringify(version)})`);
+  }
   writeFileSync(
     join(repoRoot, "runtime-plugin.json"),
     `${JSON.stringify({ name: "claude-seo-pi", version }, null, 2)}\n`,

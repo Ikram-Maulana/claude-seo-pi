@@ -31,7 +31,14 @@ mkdirSync(vendorDir, { recursive: true });
 
 const archivePath = join(vendorDir, `.claude-seo-${tag}.tar.gz`);
 console.log(`↓ downloading ${tag}`);
-execFileSync("curl", ["-sSL", url, "-o", archivePath], { stdio: "inherit" });
+// -f: an HTTP error must stop here, not be hashed as if the error page were the
+// archive and reported as a moved tag. The limits keep a stalled download from
+// hanging the build.
+execFileSync(
+  "curl",
+  ["-fsSL", "--retry", "3", "--connect-timeout", "20", "--max-time", "300", url, "-o", archivePath],
+  { stdio: "inherit" }
+);
 
 const actual = createHash("sha256").update(readFileSync(archivePath)).digest("hex");
 if (actual !== sha256) {
