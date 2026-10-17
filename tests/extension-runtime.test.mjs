@@ -11,9 +11,9 @@
  */
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -79,7 +79,7 @@ function fakeHost() {
   };
 }
 
-/** The env vars the extension sets, saved so a test can isolate its own run. */
+/** The env vars the extension manages; `loadFresh` clears them, and `env` seeds a user's own. */
 const ENV_KEYS = ["SEO_PLUGIN_ROOT", "CLAUDE_SEO_DATA_DIR"];
 
 /**
@@ -89,10 +89,11 @@ const ENV_KEYS = ["SEO_PLUGIN_ROOT", "CLAUDE_SEO_DATA_DIR"];
  * values persist; clearing them makes each assertion observe *this* run rather
  * than whatever ran before, which otherwise passes or fails by file order.
  */
-function loadFresh() {
+function loadFresh(env = {}) {
   for (const key of ENV_KEYS) {
     delete process.env[key];
   }
+  Object.assign(process.env, env);
   const host = fakeHost();
   mod.default(host.pi);
   return host;
@@ -144,6 +145,53 @@ test("the managed runtime is pinned outside the package", { skip }, () => {
   );
 });
 
+test("a data dir the user already set is kept, not overwritten", { skip }, () => {
+  const shared = join(tmpdir(), "shared-seo-runtime");
+  loadFresh({ CLAUDE_SEO_DATA_DIR: shared, SEO_PLUGIN_ROOT: "/custom/root" });
+  assert.equal(process.env.CLAUDE_SEO_DATA_DIR, shared);
+  assert.equal(process.env.SEO_PLUGIN_ROOT, "/custom/root");
+});
+
+test(
+  "an empty XDG_DATA_HOME counts as unset instead of becoming a relative data dir",
+  { skip: skip || (process.platform === "linux" ? false : "XDG applies to Linux only") },
+  () => {
+    const saved = process.env.XDG_DATA_HOME;
+    try {
+      loadFresh({ XDG_DATA_HOME: "" });
+      const dir = process.env.CLAUDE_SEO_DATA_DIR;
+      assert.ok(isAbsolute(dir), `the data dir must be absolute, got '${dir}'`);
+      assert.equal(dir, join(homedir(), ".local", "share", "claude-seo"));
+    } finally {
+      if (saved === undefined) {
+        delete process.env.XDG_DATA_HOME;
+      } else {
+        process.env.XDG_DATA_HOME = saved;
+      }
+    }
+  }
+);
+
+test("session_start tells the user when the runtime is not provisioned", { skip }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "seo-data-"));
+  try {
+    const first = loadFresh({ CLAUDE_SEO_DATA_DIR: dir });
+    const start = first.calls.events.find((e) => e.event === "session_start").handler;
+    await start({}, first.ctx);
+    assert.equal(first.calls.notifies.length, 1, "expected the not-provisioned notice");
+    assert.match(first.calls.notifies[0].message, /\/seo setup/);
+
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "runtime-state.json"), "{}");
+    const second = loadFresh({ CLAUDE_SEO_DATA_DIR: dir });
+    const again = second.calls.events.find((e) => e.event === "session_start").handler;
+    await again({}, second.ctx);
+    assert.equal(second.calls.notifies.length, 0, "a provisioned runtime needs no notice");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("the launcher is executable after load", { skip }, () => {
   loadFresh();
   const launcher = join(repoRoot, "scripts", "claude-seo");
@@ -183,7 +231,7 @@ test("the schema validator never patches the tool result it observes", { skip },
 const PYTHON_MISSING = spawnSync("python3", ["--version"]).error ? "python3 is not installed" : false;
 
 /** Run the built validator on a page and collect the lines it logged. */
-async function validatorReport(html) {
+async function validatorReport(html, toolName = "write") {
   const dir = mkdtempSync(join(tmpdir(), "seo-schema-"));
   const page = join(dir, "page.html");
   writeFileSync(page, html);
@@ -199,7 +247,7 @@ async function validatorReport(html) {
   const original = console.error;
   console.error = (line) => lines.push(String(line));
   try {
-    await handler({ toolName: "write", input: { path: page } });
+    await handler({ toolName, input: { path: page } });
     for (let waited = 0; lines.length === 0 && waited < 5000; waited += 25) {
       await new Promise((done) => setTimeout(done, 25));
     }
@@ -232,5 +280,18 @@ test(
     assert.equal(lines.length, 1);
     assert.match(lines[0], /Missing @context/);
     assert.doesNotMatch(lines[0], /hookSpecificOutput/, "the JSON envelope leaked into the log");
+  }
+);
+
+test(
+  "the schema validator also runs after an edit, not only a write",
+  { skip: skip || PYTHON_MISSING },
+  async () => {
+    const lines = await validatorReport(
+      JSON_LD('{"@context":"https://schema.org","@type":"Organization","name":"[Business Name]"}'),
+      "edit"
+    );
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /placeholder text/);
   }
 );

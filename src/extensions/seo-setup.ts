@@ -10,7 +10,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { chmodSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -33,13 +33,24 @@ const COMMANDS =
  * fallback, so the venv survives upgrades.
  */
 function dataDir() {
+  // `||`, not `??`: an empty variable counts as unset (the XDG spec says so),
+  // and a relative one would put the venv inside whatever project is open.
+  const absolute = (value: string | undefined) => (value && isAbsolute(value) ? value : undefined);
   if (process.platform === "win32") {
-    return join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "claude-seo");
+    return join(absolute(process.env.LOCALAPPDATA) ?? join(homedir(), "AppData", "Local"), "claude-seo");
   }
   if (process.platform === "darwin") {
     return join(homedir(), "Library", "Application Support", "claude-seo");
   }
-  return join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "claude-seo");
+  return join(absolute(process.env.XDG_DATA_HOME) ?? join(homedir(), ".local", "share"), "claude-seo");
+}
+
+/**
+ * The data directory in force: the user's own `CLAUDE_SEO_DATA_DIR` if they set
+ * one (the README documents pointing it at a shared runtime), else the default.
+ */
+function activeDataDir() {
+  return process.env.CLAUDE_SEO_DATA_DIR || dataDir();
 }
 
 /**
@@ -63,8 +74,8 @@ export default function seoSetup(pi: ExtensionAPI) {
   // extensions without starting a session, and a skill running before the first
   // session_start would expand $SEO_PLUGIN_ROOT to nothing.
   if (existsSync(SCRIPTS_DIR)) {
-    process.env.SEO_PLUGIN_ROOT = PLUGIN_ROOT;
-    process.env.CLAUDE_SEO_DATA_DIR = dataDir();
+    process.env.SEO_PLUGIN_ROOT ||= PLUGIN_ROOT;
+    process.env.CLAUDE_SEO_DATA_DIR = activeDataDir();
 
     // npm preserves the launcher's mode bit, but a restrictive umask or a
     // filesystem without modes would break it, and the failure is opaque from
@@ -108,7 +119,7 @@ export default function seoSetup(pi: ExtensionAPI) {
       );
       return;
     }
-    if (!existsSync(join(dataDir(), "runtime-state.json"))) {
+    if (!existsSync(join(activeDataDir(), "runtime-state.json"))) {
       notify(ctx, "[claude-seo-pi] Python runtime not provisioned yet. Run `/seo setup` once to create it.");
     }
   });
