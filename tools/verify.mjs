@@ -9,12 +9,74 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BLOCK_SCALAR, descriptionOf, frontmatterOf, parseFrontmatter } from "./frontmatter.mjs";
+import { GENERATED } from "./sync.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
+
+/** Every file under `dir`, as paths relative to it, bytecode caches excluded. */
+function filesUnder(dir) {
+  const out = [];
+  walk(dir, (file) => {
+    const rel = relative(dir, file);
+    if (!rel.split(sep).includes("__pycache__")) {
+      out.push(rel);
+    }
+  });
+  return out;
+}
+
+/**
+ * Shipped files that must be upstream's bytes but are not.
+ *
+ * Covers everything the port copies from upstream's executable code: the
+ * launcher and every `scripts/*.py` in both directions (a script upstream ships
+ * and the package lacks is a divergence too), `scripts/validate_schema_hook.py`
+ * against upstream's `hooks/validate-schema.py`, and each
+ * `extensions/<name>/scripts/` tree. The drift gate already catches a hand edit
+ * to these; this catches a transform in sync.mjs that touches them.
+ */
+export function upstreamDivergences(root = repoRoot) {
+  const upstream = join(root, "vendor", "claude-seo");
+  const problems = [];
+  const compare = (shipped, original, label) => {
+    if (!existsSync(original)) {
+      problems.push(`${label} (not in upstream)`);
+    } else if (!existsSync(shipped)) {
+      problems.push(`${label} (upstream ships it; the package does not)`);
+    } else if (!readFileSync(shipped).equals(readFileSync(original))) {
+      problems.push(`${label} (differs from upstream — this port does not patch Python)`);
+    }
+  };
+
+  const FROM_HOOKS = "validate_schema_hook.py";
+  const isScript = (name) => name.endsWith(".py") || name === "claude-seo";
+  const names = new Set([
+    ...readdirSync(join(root, "scripts")).filter(isScript),
+    ...readdirSync(join(upstream, "scripts")).filter(isScript),
+  ]);
+  names.delete(FROM_HOOKS);
+  for (const name of [...names].sort()) {
+    compare(join(root, "scripts", name), join(upstream, "scripts", name), `scripts/${name}`);
+  }
+  compare(join(root, "scripts", FROM_HOOKS), join(upstream, "hooks", "validate-schema.py"), `scripts/${FROM_HOOKS}`);
+
+  for (const ext of readdirSync(join(upstream, "extensions"), { withFileTypes: true })) {
+    const theirs = join(upstream, "extensions", ext.name, "scripts");
+    const ours = join(root, "extensions", ext.name, "scripts");
+    if (!ext.isDirectory() || !existsSync(theirs)) {
+      continue;
+    }
+    const rels = new Set([...filesUnder(theirs), ...(existsSync(ours) ? filesUnder(ours) : [])]);
+    for (const rel of [...rels].sort()) {
+      compare(join(ours, rel), join(theirs, rel), `extensions/${ext.name}/scripts/${rel}`);
+    }
+  }
+  return problems;
+}
 
 /**
  * Shortest description we accept for a skill or agent.
@@ -319,35 +381,18 @@ function main() {
   // `scripts/` is copied byte-for-byte and this port does not patch it: a local
   // edit is a divergence to carry on every upstream bump, and it destroys the
   // value of `diff -r scripts/ vendor/claude-seo/scripts/` as a review signal.
-  // The one legitimate difference is validate_schema_hook.py, from upstream hooks/.
-  {
-    const upstreamScripts = join(repoRoot, "vendor", "claude-seo", "scripts");
-    const FROM_HOOKS = "validate_schema_hook.py";
-    const diverged = [];
-    if (!existsSync(upstreamScripts)) {
-      fail("vendor/claude-seo/scripts is missing", "run `npm run vendor` first");
-    } else {
-      for (const file of readdirSync(join(repoRoot, "scripts")).filter((f) => f.endsWith(".py"))) {
-        const ours = readFileSync(join(repoRoot, "scripts", file));
-        const theirs = join(upstreamScripts, file);
-        if (!existsSync(theirs)) {
-          if (file !== FROM_HOOKS) {
-            diverged.push(`${file} (not in upstream scripts/ and not the hooks file)`);
-          }
-          continue;
-        }
-        if (!ours.equals(readFileSync(theirs))) {
-          diverged.push(file);
-        }
-      }
-    }
+  // validate_schema_hook.py is upstream's hooks/validate-schema.py under a new name.
+  if (!existsSync(join(repoRoot, "vendor", "claude-seo", "scripts"))) {
+    fail("vendor/claude-seo/scripts is missing", "run `npm run vendor` first");
+  } else {
+    const diverged = upstreamDivergences();
     if (diverged.length > 0) {
       fail(
         `the shipped Python diverges from upstream: ${diverged.join(", ")}`,
         "this port ships upstream verbatim — report the fix upstream instead"
       );
     } else {
-      ok("every shipped Python file is byte-identical to upstream");
+      ok("every shipped Python file, the launcher and the schema hook are byte-identical to upstream");
     }
   }
 
@@ -418,8 +463,10 @@ function main() {
       }
       const text = readFileSync(join(repoRoot, doc), "utf-8");
       // Markdown links and `@path` imports both resolve to a file at runtime.
+      // A `#section` anchor still loads the file, so it counts; a path inside a
+      // directory is published only when that top-level directory is.
       const targets = new Set([
-        ...[...text.matchAll(/\]\(\.?\/?([A-Za-z0-9_.-]+\.md)\)/g)].map((m) => m[1]),
+        ...[...text.matchAll(/\]\(\.?\/?([A-Za-z0-9_.\/-]+\.md)(?:#[^)]*)?\)/g)].map((m) => m[1].split("/")[0]),
         ...[...text.matchAll(/^@([A-Za-z0-9_.-]+\.md)$/gm)].map((m) => m[1]),
       ]);
       for (const target of targets) {
@@ -538,8 +585,18 @@ function main() {
   }
 
   // 7. Hand-written extensions
+  // Read from src/extensions/ rather than listed here, so a new extension cannot
+  // ship unchecked; each one must also be registered, or pi never loads it.
   const extDir = join(repoRoot, "extensions");
-  for (const file of ["seo-setup.ts", "seo-schema-validator.ts"]) {
+  const handWritten = readdirSync(join(repoRoot, "src", "extensions")).filter((f) => f.endsWith(".ts"));
+  const registered = new Set((pkg.pi?.extensions ?? []).map((entry) => entry.replace(/^\.\/extensions\//, "")));
+  const unregistered = handWritten.filter((file) => !registered.has(file));
+  if (unregistered.length > 0) {
+    fail(`src/extensions has files package.json pi.extensions does not load: ${unregistered.join(", ")}`);
+  } else {
+    ok(`all ${handWritten.length} hand-written extensions are registered in pi.extensions`);
+  }
+  for (const file of handWritten) {
     const full = join(extDir, file);
     if (!existsSync(full)) {
       fail(`extension ${file} is missing`);
@@ -562,6 +619,15 @@ function main() {
     fail("package.json files[] would publish vendor/", "that is build input, not artifact");
   } else {
     ok("vendor/ is excluded from the published package");
+  }
+
+  // Every directory sync generates must be published: one that is committed but
+  // not packed works from a git install and is missing from npm.
+  const unpublished = GENERATED.filter((dir) => !files.includes(dir) && !files.includes(`${dir}/`));
+  if (unpublished.length > 0) {
+    fail(`sync generates directories package.json files[] omits: ${unpublished.join(", ")}`);
+  } else {
+    ok(`every generated directory is in files[] (${GENERATED.join(", ")})`);
   }
 
   // The build reads frontmatter with the `yaml` package, but tools/ is not

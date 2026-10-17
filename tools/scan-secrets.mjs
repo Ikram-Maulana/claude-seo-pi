@@ -47,8 +47,11 @@ export const PATTERNS = [
   [
     // The key may be quoted (JSON, quoted YAML) and may carry a prefix or
     // suffix (`MOZ_SECRET_KEY`, `api_key_prod`); the value is a quoted literal.
+    // A base64 value (`+`, `/`, `=`, as in an AWS secret access key) counts
+    // only when it mixes upper case, lower case and digits, so a quoted path
+    // under a `token_path` key does not.
     "assigned literal secret",
-    /(?:api[_-]?key|apikey|client[_-]?secret|secret|password|token)[A-Za-z0-9_]*["']?\s*[:=]\s*["'](?<value>[A-Za-z0-9_\-]{20,})["']/gi,
+    /(?:api[_-]?key|apikey|client[_-]?secret|secret|password|token)[A-Za-z0-9_]*["']?\s*[:=]\s*["'](?<value>[A-Za-z0-9_\-]{20,}|(?=[^"'\s]*[A-Z])(?=[^"'\s]*[a-z])(?=[^"'\s]*\d)[A-Za-z0-9_\-+/=]{20,})["']/gi,
   ],
   [
     // An unquoted `.env` / shell assignment. Restricted to SHOUTING_CASE names

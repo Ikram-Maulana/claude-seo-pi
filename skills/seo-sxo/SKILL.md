@@ -50,7 +50,7 @@ well-optimized it is.
 
 Read `references/page-type-taxonomy.md` for classification rules.
 
-1. Search Google for the target keyword (WebSearch)
+1. Search Google for the target keyword (web search)
 2. For each of the top 10 organic results, record:
    - URL and domain authority tier (brand / niche authority / unknown)
    - Page type (classify using taxonomy)
@@ -169,7 +169,7 @@ If DataForSEO MCP tools are available:
 1. **Before any API call**, run cost estimate and confirm with user
 2. Use `serp_organic_live_advanced` for precise SERP data (positions, features, snippets)
 3. Use `kw_data_google_ads_search_volume` for search volume and competition metrics
-4. Fall back to WebSearch if DataForSEO unavailable -- note reduced precision in output
+4. Fall back to web search if DataForSEO unavailable -- note reduced precision in output
 
 ## SXO Score vs SEO Health Score
 
@@ -233,10 +233,10 @@ The SXO score is **separate** from the main SEO Health Score.
 |-------|--------|
 | URL fetch fails | Report error, suggest checking URL accessibility |
 | No keyword provided or detected | Ask user to provide target keyword |
-| WebSearch returns <5 results | Proceed with available data, note limited sample |
+| web search returns <5 results | Proceed with available data, note limited sample |
 | SERP has no organic results (all ads) | Note highly commercial SERP, analyze ad copy only |
 | Target page is JavaScript-rendered | Note limitation, use available HTML content |
-| DataForSEO cost exceeds threshold | Fall back to WebSearch, notify user |
+| DataForSEO cost exceeds threshold | Fall back to web search, notify user |
 
 ## Quality Checklist
 

@@ -19,7 +19,7 @@
  * Run: node tools/upstream-tests.mjs [--verbose]
  */
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -40,8 +40,8 @@ const staging = join(repoRoot, "tests-upstream");
  * intentional divergence. Everything not listed here runs, and a failure in it
  * is a genuine regression in the shipped code.
  *
- * The reasons cluster into five facts about the port, all documented in the
- * README: it ships no `extensions/<name>/install.sh`; it drives the schema
+ * The reasons cluster into five facts about the port, all documented in
+ * CONTRIBUTING.md: it ships no `extensions/<name>/install.sh`; it drives the schema
  * validator from an extension instead of `hooks/`; it rewrites
  * `${CLAUDE_PLUGIN_ROOT}` to `$SEO_PLUGIN_ROOT` and `mcp__x__*` to `mcp:x`; it
  * drops `maxTurns`; and it does not publish upstream's own repository files
@@ -90,13 +90,18 @@ export const DESELECTED = [
   // ── `mcp:server` replaces `mcp__server__*`, and the per-extension directory
   //    layout is flattened into skills/ and agents/ for omp discovery ──
   "test_agent_mcp_permissions.py",
+  // Reads `extensions/dataforseo/agents/seo-dataforseo.md`; the agent ships
+  // flattened as `agents/seo-dataforseo.md`, which the rest of the file checks.
+  "test_audit_agent_turn_budget.py::test_dataforseo_extension_mirror_also_has_the_early_write_instruction",
   // ── The body rewrite replaces "call WebFetch" with the packaged fetcher ──
   "test_sync_flow.py::test_agent_has_untrusted_webfetch_rule",
+  // Counts agents that mention `WebFetch` among other markers and pins 15; the
+  // rewrite removes the name from seo-cluster and seo-maps, which leaves 13. Both
+  // still carry the untrusted-content rule, which the sibling tests still check.
+  "test_agent_untrusted_content.py::test_fifteen_agents_ingest_external_content",
   // ── `maxTurns` is a Claude Code field with no pi-subagents equivalent ──
   "test_audit_agent_turn_budget.py::test_every_audit_agent_has_a_turn_budget_at_least_30",
   "test_audit_agent_turn_budget.py::test_named_reporters_agents_have_at_least_40_turns",
-  "test_audit_agent_turn_budget.py::test_dataforseo_extension_mirror_also_has_the_early_write_instruction",
-  "test_agent_untrusted_content.py::test_fifteen_agents_ingest_external_content",
   // ── Upstream repository files are not part of the published package ──
   // `.claude-plugin/`, `docs/`, `CLAUDE.md`, `AGENTS.md` and `pyproject.toml` do
   // not exist here, so the tests that read them are listed individually. The
@@ -335,11 +340,6 @@ function main() {
 
   try {
     execFileSync(interpreter, args, { cwd: repoRoot, stdio: "inherit" });
-    const { removed, total } = deselectedTestCount(interpreter, entries);
-    console.log(
-      `\n✓ upstream suite passed — ${total - removed}/${total} upstream tests ran; ` +
-        `${removed} were not run, via ${entries.length} entries (each with a stated reason)`
-    );
   } catch (error) {
     console.error(
       "\n✗ the upstream suite failed against this tree. A failure here is usually a\n" +
@@ -348,6 +348,52 @@ function main() {
     );
     process.exit(error.status ?? 1);
   }
+
+  const { removed, total } = deselectedTestCount(interpreter, entries);
+  const ran = total - removed;
+  console.log(
+    `\n✓ upstream suite passed — ${ran}/${total} upstream tests ran; ` +
+      `${removed} were not run, via ${entries.length} entries (each with a stated reason)`
+  );
+  checkDocumentedCount(ran, total, pythonVersion(interpreter));
+}
+
+/**
+ * The count CONTRIBUTING.md quotes, for the Python that just ran.
+ *
+ * The line reads `# 878 of 999 upstream tests on Python 3.14, 879 below it`:
+ * the first figure applies from that version up, the second below it.
+ */
+export function documentedCount(text, version) {
+  const match = /# (\d+) of (\d+) upstream tests on Python (\d+)\.(\d+), (\d+) below it/.exec(text);
+  if (!match) {
+    return null;
+  }
+  const [, from, total, major, minor, below] = match.map(Number);
+  const atOrAbove = version !== null && (version[0] > major || (version[0] === major && version[1] >= minor));
+  return { ran: atOrAbove ? from : below, total };
+}
+
+/**
+ * Compare the measured count with the documented one.
+ *
+ * A mismatch fails in CI, where requirements.txt is installed whole. Locally it
+ * only warns: a venv missing an optional package skips that module at
+ * collection, which changes the total without anything being wrong with the tree.
+ */
+function checkDocumentedCount(ran, total, version) {
+  const documented = documentedCount(readFileSync(join(repoRoot, "CONTRIBUTING.md"), "utf-8"), version);
+  if (documented && documented.ran === ran && documented.total === total) {
+    return;
+  }
+  const message = documented
+    ? `CONTRIBUTING.md says ${documented.ran} of ${documented.total} for this Python; the run measured ${ran} of ${total}`
+    : "CONTRIBUTING.md no longer has the `# N of M upstream tests on Python X.Y, K below it` line";
+  if (process.env.CI) {
+    console.error(`\n✗ ${message}. Update the line to the measured count.`);
+    process.exit(1);
+  }
+  console.warn(`\n⚠ ${message} (a warning outside CI: an incomplete venv changes the count).`);
 }
 
 /**

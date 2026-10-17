@@ -4,7 +4,9 @@
  *
  * skills/ agents/ scripts/ extensions/ schema/ data/ charts/ are wiped and
  * rebuilt on every run; tools/, src/ and vendor/ are never touched. The wipe
- * refuses to delete any directory holding tracked source.
+ * refuses to run if a PROTECTED path is listed as generated or a generated
+ * directory holds a `.git`; anything else in those directories is discarded,
+ * which is why they must never be edited by hand.
  *
  * Run: node tools/vendor.mjs && node tools/sync.mjs
  */
@@ -20,7 +22,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseFrontmatter, renderFrontmatter, splitFrontmatter } from "./frontmatter.mjs";
 
@@ -29,7 +31,7 @@ const repoRoot = resolve(here, "..");
 const upstream = join(repoRoot, "vendor", "claude-seo");
 
 /** Directories rebuilt from scratch on every sync. */
-const GENERATED = ["skills", "agents", "scripts", "extensions", "schema", "data", "charts"];
+export const GENERATED = ["skills", "agents", "scripts", "extensions", "schema", "data", "charts"];
 
 /**
  * Paths the wipe must never destroy. Nothing here shares a directory with the
@@ -40,9 +42,10 @@ const PROTECTED = ["tools", "src", "vendor", "package.json", "README.md", "LICEN
 
 /**
  * Claude Code tool names → pi tool names. `null` drops the tool: pi has no
- * built-in fetch/search tool, and pi-subagents ignores unknown names in a
- * `tools` allowlist, so passing them through would look like a grant that
- * grants nothing.
+ * built-in fetch/search tool. omp does have `web_search`, but the same agent
+ * file serves both hosts, and pi-subagents checks every allowlisted name
+ * against pi's registry before the first turn and fails the run on a missing
+ * one, so passing it through would break the agent on pi.
  */
 const TOOL_MAP = {
   read: "read",
@@ -62,8 +65,10 @@ const TOOL_MAP = {
  * Claude Code names MCP tools `mcp__<server>__<tool>`. pi-mcp-adapter selects a
  * whole server with `mcp:<server>`, so the wildcard form maps across; the
  * per-tool form has no pi-subagents allowlist equivalent and is dropped.
+ * Server names may carry `_` and `.`, and keep their case: `mcp:` selectors
+ * must name a configured server exactly.
  */
-const MCP_WILDCARD = /^mcp__([a-z0-9-]+)__\*$/;
+const MCP_WILDCARD = /^mcp__([A-Za-z0-9_.-]+?)__\*$/;
 const MCP_ANY = /^mcp__/;
 
 /**
@@ -195,6 +200,98 @@ function rewriteAgentBody(body, file) {
 }
 
 /**
+ * Skill rewrites, keyed by path under skills/, applied after every skill is
+ * installed and merged.
+ *
+ * Skills are read by the parent model, which on pi has no WebFetch, no
+ * WebSearch and no `~/.claude/settings.json`. `WebSearch` becomes plain "web
+ * search" everywhere (omp's `web_search`, or a web-search MCP tool on pi); the
+ * rest needs its own wording. As with BODY_REWRITES, a pattern that no longer
+ * matches fails the build, and step 10 fails if any of these names survive.
+ */
+const SKILL_REWRITES = {
+  "seo/SKILL.md": [
+    [
+      /Claude Code expands\n`\$SEO_PLUGIN_ROOT` to the installed plugin directory/,
+      "The claude-seo-pi extension exports\n`$SEO_PLUGIN_ROOT` as the installed package directory",
+    ],
+    [/; manual installers rewrite the canonical form to\n`"\$HOME\/\.claude\/skills\/seo\/scripts\/claude-seo"`\./, "."],
+  ],
+  "seo-cluster/SKILL.md": [
+    [/Test: Does ~\/\.claude\/skills\/blog\/SKILL\.md exist\?/, "Test: Is a `blog` skill (claude-blog) available in this session?"],
+  ],
+  "seo-maps/SKILL.md": [
+    [/Fetch the business website via WebFetch/, "Fetch the business website with the packaged fetcher (`fetch_page.py`)"],
+    [/`WebFetch (https:\/\/www\.bing\.com\/maps\?q=[^`]+)`/, "fetch `$1`"],
+  ],
+  "seo-local/SKILL.md": [
+    [/\(check via WebFetch or site: search patterns\)/, "(check via `fetch_page.py` or site: search patterns)"],
+  ],
+  "seo-firecrawl/SKILL.md": [
+    [
+      /Use `WebFetch` tool for basic HTML retrieval/,
+      "Use a web-fetch tool (omp's `read` on a URL, or a web-fetch MCP tool) for basic HTML retrieval",
+    ],
+  ],
+  "seo-profound/SKILL.md": [
+    [
+      /check `~\/\.claude\/settings\.json` has `env\.PROFOUND_API_KEY`\./,
+      "check that `PROFOUND_API_KEY` is set in the environment (your shell, or the runtime's settings `env` block).",
+    ],
+  ],
+  "seo-seranking/SKILL.md": [
+    [
+      /verify `SERANKING_API_KEY` is present in `~\/\.claude\/settings\.json` under `env\.`\. If absent, tell the user to run the installer\./,
+      "verify `SERANKING_API_KEY` is set in the environment (your shell, or the runtime's settings `env` block). " +
+        "If absent, point the user at Environment variables in the README.",
+    ],
+  ],
+  "seo-bing/SKILL.md": [
+    [/in ~\/\.claude\/settings\.json env\./, "in the environment (your shell, or the runtime's settings env block)."],
+  ],
+};
+
+/** Names a skill must not tell the model to use: they exist only in Claude Code. */
+const CLAUDE_CODE_ONLY = /\bWeb(?:Fetch|Search)\b|~\/\.claude\//;
+
+/** Apply SKILL_REWRITES and the generic WebSearch rewording to the installed skills. */
+function rewriteSkills() {
+  const stale = [];
+  for (const [rel, rules] of Object.entries(SKILL_REWRITES)) {
+    const file = join(repoRoot, "skills", rel);
+    if (!existsSync(file)) {
+      stale.push(`${rel} (file missing)`);
+      continue;
+    }
+    let text = readFileSync(file, "utf-8");
+    for (const [pattern, replacement] of rules) {
+      if (!pattern.test(text)) {
+        stale.push(`${rel}: ${pattern.source}`);
+        continue;
+      }
+      text = text.replace(pattern, replacement);
+    }
+    writeFileSync(file, text, "utf-8");
+  }
+  if (stale.length > 0) {
+    throw new Error(
+      `these skill rewrites no longer match upstream prose — the skill would go on ` +
+        `naming a Claude Code tool or path:\n  · ${stale.join("\n  · ")}`
+    );
+  }
+  walk(join(repoRoot, "skills"), (file) => {
+    if (!/\.md$/i.test(file)) {
+      return;
+    }
+    const original = readFileSync(file, "utf-8");
+    const rewritten = original.replace(/\bWebSearch\b/g, "web search");
+    if (rewritten !== original) {
+      writeFileSync(file, rewritten, "utf-8");
+    }
+  });
+}
+
+/**
  * Shortest description we accept for a skill or agent.
  *
  * A floor for catching a description a transform *emptied*, not a prose style
@@ -243,15 +340,16 @@ function countFiles(dir) {
 }
 
 /** Map one Claude Code tool name to its pi equivalent, recording what changed. */
-function mapTool(name, file) {
-  const wildcard = MCP_WILDCARD.exec(name);
+function mapTool(raw, file) {
+  const wildcard = MCP_WILDCARD.exec(raw);
   if (wildcard) {
     return { keep: `mcp:${wildcard[1]}` };
   }
-  if (MCP_ANY.test(name)) {
-    (report.droppedTools.get(file) ?? report.droppedTools.set(file, []).get(file)).push(name);
+  if (MCP_ANY.test(raw)) {
+    (report.droppedTools.get(file) ?? report.droppedTools.set(file, []).get(file)).push(raw);
     return { drop: true };
   }
+  const name = raw.toLowerCase();
   const target = TOOL_MAP[name];
   if (target === undefined) {
     // Unknown to our map but possibly valid in pi.
@@ -286,7 +384,7 @@ export function convertAgent(source, file) {
 
   const mapped = [];
   for (const piece of (values.tools ?? "").split(",")) {
-    const tool = piece.trim().toLowerCase();
+    const tool = piece.trim();
     if (!tool) {
       continue;
     }
@@ -403,7 +501,7 @@ function rewriteTree(dir) {
  * upstream than the archive holds.
  */
 function installSkill(srcDir, label) {
-  const name = srcDir.split("/").pop();
+  const name = basename(srcDir);
   const dest = join(repoRoot, "skills", name);
   const existing = existsSync(dest);
 
@@ -446,7 +544,7 @@ function installSkill(srcDir, label) {
 }
 
 function installAgent(srcFile, label) {
-  const name = srcFile.split("/").pop();
+  const name = basename(srcFile);
   const dest = join(repoRoot, "agents", name);
   if (existsSync(dest)) {
     report.collisions.push(`agents/${name} (${label} replaced the earlier copy)`);
@@ -538,6 +636,7 @@ function main() {
       }
     }
   }
+  rewriteSkills();
 
   // 3. Agents — core first, then extension agents.
   log("→ agents");
@@ -590,6 +689,17 @@ function main() {
     }
   }
 
+  // 6b. The DataForSEO MCP server's response filter. Upstream's installer points
+  //     the server at it through FIELD_CONFIG_PATH; without it every response
+  //     carries every field (upstream measures ~75% more tokens). The README's
+  //     MCP block points FIELD_CONFIG_PATH here.
+  const fieldConfig = join(extRoot, "dataforseo", "field-config.json");
+  if (!existsSync(fieldConfig)) {
+    throw new Error("extensions/dataforseo/field-config.json is missing from the vendored tree");
+  }
+  mkdirSync(join(repoRoot, "extensions", "dataforseo"), { recursive: true });
+  cpSync(fieldConfig, join(repoRoot, "extensions", "dataforseo", "field-config.json"));
+
   // 7. Hand-written extensions, copied in so the package root carries them.
   log("→ extensions (hand-written)");
   const srcExt = join(repoRoot, "src", "extensions");
@@ -616,9 +726,19 @@ function main() {
   if (!existsSync(upstreamPlugin)) {
     throw new Error(".claude-plugin/plugin.json is missing from the vendored tree: cannot derive the version");
   }
+  const upstreamVersion = JSON.parse(readFileSync(upstreamPlugin, "utf-8")).version;
+  // The pin names a tag and the version comes from plugin.json; an upstream
+  // release that forgot to bump one would ship under a version nobody tagged.
+  const { tag } = JSON.parse(readFileSync(join(repoRoot, "vendor", "lock.json"), "utf-8"));
+  if (tag !== `v${upstreamVersion}`) {
+    throw new Error(
+      `vendor/lock.json pins ${tag} but its plugin.json says ${upstreamVersion}: ` +
+        "the package version would not match the upstream tag it ports"
+    );
+  }
   const pkgPath = join(repoRoot, "package.json");
   const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-  const version = portVersion(JSON.parse(readFileSync(upstreamPlugin, "utf-8")).version, pkg.version);
+  const version = portVersion(upstreamVersion, pkg.version);
   writeFileSync(
     join(repoRoot, "runtime-plugin.json"),
     `${JSON.stringify({ name: "claude-seo-pi", version }, null, 2)}\n`,
@@ -647,15 +767,26 @@ function main() {
   // 10. Fail loudly if a placeholder survived in a file the model reads.
   //     Scripts and hooks are excluded: there the occurrences are comments.
   const leftovers = [];
+  const claudeOnly = [];
   for (const dir of ["skills", "agents"]) {
     walk(join(repoRoot, dir), (file) => {
-      if (readFileSync(file, "utf-8").includes("${CLAUDE_")) {
+      const text = readFileSync(file, "utf-8");
+      if (text.includes("${CLAUDE_")) {
         leftovers.push(relative(repoRoot, file));
+      }
+      if (/\.md$/i.test(file) && CLAUDE_CODE_ONLY.test(text)) {
+        claudeOnly.push(relative(repoRoot, file));
       }
     });
   }
   if (leftovers.length > 0) {
     throw new Error(`Claude placeholders survived in: ${leftovers.join(", ")}`);
+  }
+  if (claudeOnly.length > 0) {
+    throw new Error(
+      `these files still name WebFetch, WebSearch or ~/.claude/ — add a SKILL_REWRITES ` +
+        `or BODY_REWRITES entry: ${claudeOnly.join(", ")}`
+    );
   }
   // 11. Every skill must carry a real description: omp silently drops skills
   //     without one. Check the *resolved* value — a `description: >` header whose

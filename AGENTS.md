@@ -7,7 +7,7 @@ Instructions for coding agents in this repository; user docs are in [README.md](
 
 ## Policy
 
-- Never edit the generated trees: `skills/`, `agents/`, `scripts/`, `extensions/`, `schema/`, `data/`, `requirements.txt`, `runtime-plugin.json`. `tools/sync.mjs` discards the edit on the next sync. Change `tools/sync.mjs`, `src/extensions/` or the upstream source instead.
+- Never edit the generated trees: `skills/`, `agents/`, `scripts/`, `extensions/`, `schema/`, `data/`, `charts/` (when upstream ships it), `requirements.txt`, `runtime-plugin.json`. `tools/sync.mjs` discards the edit on the next sync. Change `tools/sync.mjs`, `src/extensions/` or the upstream source instead.
 - Never patch `scripts/*.py`, even for a two-line fix: it is byte-identical to upstream (`tests/tree.test.mjs`, `verify`), so a local fix is a divergence carried on every bump. Report it upstream; the open findings this port deliberately leaves unpatched are listed in CONTRIBUTING.md.
 - Never commit a credential: `npm run secrets` gates CI, but by then the value is already in git history.
 - Never add a runtime dependency: the package ships none, and `tools/` is not published.

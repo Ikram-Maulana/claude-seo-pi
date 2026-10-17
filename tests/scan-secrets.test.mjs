@@ -68,6 +68,16 @@ test("scanner detects an assigned literal under a quoted key", () => {
   assert.deepEqual(labels(`password = "${MIXED}"`), ["assigned literal secret"]);
 });
 
+test("scanner detects a base64 value in an assigned literal", () => {
+  // AWS secret access keys and most generated passwords carry `/`, `+` or `=`;
+  // the value class used to stop at the first one, so the match failed.
+  const base64 = `${MIXED.slice(0, 12)}/${MIXED.slice(12, 24)}+${MIXED.slice(24, 39)}=`;
+  assert.deepEqual(labels(`aws_secret_access_key = "${base64}"`), ["assigned literal secret"]);
+  assert.deepEqual(labels(`{"client_secret": "${base64}"}`), ["assigned literal secret"]);
+  // A path under a token-ish key is not one: it lacks the mixed case and digits.
+  assert.deepEqual(labels('token_path = "/var/run/secrets/kubernetes/serviceaccount"'), []);
+});
+
 test("scanner detects prefixed and suffixed key names", () => {
   assert.deepEqual(labels(`MOZ_SECRET_KEY = "${MIXED}"`), ["assigned literal secret"]);
 });

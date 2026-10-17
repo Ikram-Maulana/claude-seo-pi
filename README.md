@@ -218,6 +218,7 @@ Add the servers you want under `mcpServers`:
       "env": {
         "DATAFORSEO_USERNAME": "...",
         "DATAFORSEO_PASSWORD": "...",
+        "FIELD_CONFIG_PATH": "<package root>/extensions/dataforseo/field-config.json",
         "ENABLED_MODULES": "SERP,KEYWORDS_DATA,ONPAGE,DATAFORSEO_LABS,BACKLINKS,DOMAIN_ANALYTICS,BUSINESS_DATA,CONTENT_ANALYSIS,AI_OPTIMIZATION"
       }
     },
@@ -235,8 +236,8 @@ Add the servers you want under `mcpServers`:
 }
 ```
 
-Restart the session, then verify with `/mcp` in pi or your omp MCP command. The
-skill checks for its tools before use and tells you if the server is missing.
+Restart the session, then verify with `/mcp` in pi or your omp MCP command; a skill
+tells you if its server is missing. `<package root>` is what `echo $SEO_PLUGIN_ROOT` prints in a session.
 
 ### Environment variables
 
@@ -250,8 +251,7 @@ These integrations need no MCP server, only credentials:
 | Matomo | `MATOMO_URL`, `MATOMO_API_TOKEN`, `MATOMO_SITE_ID` | same, or `~/.config/claude-seo/matomo.json` (`0600`) |
 | Unlighthouse | none | needs only Node 22.18+; no key |
 
-Three runtime variables are set for you by the extension, documented here only
-because setting them yourself overrides the default:
+Set for you by the extension; setting one yourself overrides the default:
 
 | Variable | Default | Effect |
 |---|---|---|
@@ -285,6 +285,7 @@ Each skill's own `references/` directory holds the detail for that domain.
 | Agents not dispatchable on pi | `pi install npm:pi-subagents`, then restart. |
 | omp agents run at `high` while your session is `max` | Agents inherit the model, not the thinking level. Run `omp config set defaultThinkingLevel max`. |
 | A skill cites a file that does not exist | Upstream drift. Please open an issue. |
+| `[seo-schema] …` after editing a page, or `validator unavailable` | JSON-LD findings, appended after each edit or write of a page with JSON-LD. Needs Python 3.10+ (`CLAUDE_SEO_PYTHON`); to turn it off, see CONTRIBUTING.md. |
 
 ## Uninstall
 
@@ -302,10 +303,9 @@ disk. Credentials under `~/.config/claude-seo/` are likewise left alone.
 
 ## Contributing
 
-This is a port, not a fork: the upstream plugin is vendored at a pinned tag and
-transformed at build time, and the generated trees (`skills/`, `agents/`,
-`scripts/`, `extensions/`) are rebuilt on every sync, so edit them upstream or in
-`tools/sync.mjs`, never in place.
+This is a port, not a fork: upstream is vendored at a pinned tag and transformed
+at build time. The generated trees (`skills/`, `agents/`, `scripts/`,
+`extensions/`) are rebuilt on every sync: edit upstream or `tools/sync.mjs`, never in place.
 
 **[CONTRIBUTING.md](CONTRIBUTING.md)** covers the build, the test suites, the
 rules the build enforces, and the upstream findings this port deliberately does

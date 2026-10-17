@@ -128,6 +128,20 @@ test("an agent's unmanaged keys keep their YAML type, and a non-scalar fails the
   assert.throws(() => convertAgent(source(["meta:", "  k: v"]), "scout.md"), /"meta" is a mapping/);
 });
 
+test("an MCP wildcard keeps its server name exactly, underscores, dots and case included", () => {
+  // `mcp:` selectors must name a configured server; the old pattern lowercased
+  // the name and rejected `_` and `.`, so such a grant was silently dropped.
+  const toolsOf = (tools) =>
+    parseFrontmatter(
+      frontmatterOf(
+        convertAgent(["---", "name: scout", "description: A scout agent that reads pages.", `tools: ${tools}`, "---", ""].join("\n"), "scout.md")
+      )
+    ).values.tools;
+  assert.equal(toolsOf("Read, mcp__google_analytics__*"), "read, mcp:google_analytics");
+  assert.equal(toolsOf("Read, mcp__My.Server__*"), "read, mcp:My.Server");
+  assert.equal(toolsOf("Read, mcp__dataforseo__serp_live"), "read", "a per-tool MCP grant has no pi equivalent");
+});
+
 test("skill-dir placeholders read as prose, not as a path to type", () => {
   // `${CLAUDE_SKILL_DIR}` in backticks became `this skill's directory` in
   // backticks, which reads as a literal path.

@@ -48,7 +48,7 @@ const ENTRY = join(repoRoot, "extensions", "seo-setup.ts");
  * interpreter, not an expected path.
  *
  * The match list is deliberately narrow: matching `Unexpected token` as well
- * would let a real syntax error in the extension skip all eight tests and exit
+ * would let a real syntax error in the extension skip every test here and exit
  * 0, reading as a green suite.
  */
 const CANNOT_STRIP_TYPES = /Unknown file extension|ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX|--experimental-strip-types/i;
@@ -396,7 +396,7 @@ async function validatorReport(html, { toolName = "write", key = "path", extra =
  * A stand-in interpreter that records every call. It answers the `-c` probe
  * like Python and exits with `status` (printing `stderr`) when run on the hook.
  */
-function stubPython(dir, { status = 0, stdout = "", stderr = "", probe = 0, sleep = 0 } = {}) {
+function stubPython(dir, { status = 0, stdout = "", stderr = "", probe = 0, probeOut = "/stub/python", sleep = 0 } = {}) {
   const log = join(dir, "calls.log");
   const stub = join(dir, "python");
   writeFileSync(
@@ -404,7 +404,7 @@ function stubPython(dir, { status = 0, stdout = "", stderr = "", probe = 0, slee
     [
       "#!/bin/sh",
       `echo "$@" >> '${log}'`,
-      `if [ "$1" = "-c" ]; then [ ${probe} -eq 0 ] && echo /stub/python; exit ${probe}; fi`,
+      `if [ "$1" = "-c" ]; then [ ${probe} -eq 0 ] && printf '%s\\n' '${probeOut}'; exit ${probe}; fi`,
       // `exec`, so the timeout's kill reaches the sleeper itself: an orphaned
       // child would hold the pipes open and delay the callback past the kill.
       sleep ? `exec sleep ${sleep}` : "",
@@ -475,7 +475,7 @@ test(
   "the schema validator runs after an edit and reads every path key the hosts use",
   { skip: skip || PYTHON_MISSING },
   async () => {
-    for (const key of ["path", "file_path", "filePath"]) {
+    for (const key of ["path", "file_path", "filePath", "filename"]) {
       const { result } = await validatorReport(PLACEHOLDER_PAGE, { toolName: "edit", key });
       assert.match(result?.content.at(-1).text ?? "", /placeholder text/, `the '${key}' input key was not read`);
     }
@@ -551,6 +551,50 @@ test("the schema validator spawns no Python for a file without JSON-LD", { skip:
     await withEnv({ CLAUDE_SEO_PYTHON: stub }, async () => {
       const handler = await freshValidator();
       await capture(() => handler(writeEvent({ path: "App.tsx" }), { cwd: dir }));
+    });
+    assert.ok(calls().some((line) => line.includes("validate_schema_hook.py")), "the hook never ran");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the schema validator ignores tools other than edit and write", { skip: skip || NO_POSIX_STUB }, async () => {
+  // The handler runs after every tool call; a read of a page that carries
+  // JSON-LD must not spawn Python or append findings to the read result.
+  const dir = mkdtempSync(join(tmpdir(), "seo-schema-tools-"));
+  try {
+    const page = join(dir, "page.html");
+    writeFileSync(page, PLACEHOLDER_PAGE);
+    const { stub, calls } = stubPython(dir, { status: 2, stderr: "placeholder" });
+    await withEnv({ CLAUDE_SEO_PYTHON: stub }, async () => {
+      const handler = await freshValidator();
+      for (const toolName of ["read", "bash", "grep"]) {
+        const { result } = await capture(() => handler({ ...writeEvent({ path: page }), toolName }, { cwd: dir }));
+        assert.equal(result, undefined, `${toolName} must not be validated`);
+      }
+    });
+    assert.deepEqual(calls(), [], "Python was spawned for a tool that writes nothing");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a Store Python whose sys.executable is under WindowsApps is accepted", { skip: skip || NO_POSIX_STUB }, async () => {
+  // A genuine Microsoft Store install reports its executable under
+  // %LOCALAPPDATA%\Microsoft\WindowsApps\; only the alias stub's stderr marks a fake.
+  const dir = mkdtempSync(join(tmpdir(), "seo-schema-store-"));
+  try {
+    const page = join(dir, "page.html");
+    writeFileSync(page, PLACEHOLDER_PAGE);
+    const { stub, calls } = stubPython(dir, {
+      status: 2,
+      stderr: "placeholder text: [Business Name]",
+      probeOut: "C:\\Users\\u\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\python.exe",
+    });
+    await withEnv({ CLAUDE_SEO_PYTHON: stub }, async () => {
+      const handler = await freshValidator();
+      const { result } = await capture(() => handler(writeEvent({ path: page }), { cwd: dir }));
+      assert.match(result?.content.at(-1).text ?? "", /placeholder text/, "the Store Python was rejected as a stub");
     });
     assert.ok(calls().some((line) => line.includes("validate_schema_hook.py")), "the hook never ran");
   } finally {

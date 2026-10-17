@@ -16,12 +16,11 @@ metadata:
 
 **Runtime:** Run bundled Python tools through
 `"$SEO_PLUGIN_ROOT/scripts/claude-seo" run <script.py>`. That is the single
-canonical form used by every skill and agent. Claude Code expands
-`$SEO_PLUGIN_ROOT` to the installed plugin directory, so the launcher is
+canonical form used by every skill and agent. The claude-seo-pi extension exports
+`$SEO_PLUGIN_ROOT` as the installed package directory, so the launcher is
 found without any `PATH` entry; the repository ships no top-level `bin/`
 directory because hosted marketplaces reject one. Repository users run
-`./scripts/claude-seo`; manual installers rewrite the canonical form to
-`"$HOME/.claude/skills/seo/scripts/claude-seo"`. Never invoke bundled scripts
+`./scripts/claude-seo`. Never invoke bundled scripts
 with a bare Python interpreter.
 
 Comprehensive SEO analysis across all industries (SaaS, local services,

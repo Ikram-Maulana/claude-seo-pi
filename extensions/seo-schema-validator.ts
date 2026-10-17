@@ -55,7 +55,14 @@ function candidates(): Interpreter[] {
   return list;
 }
 
-/** The Windows App Execution Alias answers `python` with a Store prompt, not Python. */
+/**
+ * The Windows App Execution Alias answers `python` with a Store prompt, not Python.
+ *
+ * Matched against stderr only. Upstream (`hooks/run-python-hook.js`) also tests
+ * stdout, but a real Store Python reports its `sys.executable` under
+ * `%LOCALAPPDATA%\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.x_…`,
+ * so that rejected every genuine Store install.
+ */
 const STORE_STUB = /Microsoft Store|WindowsApps|App execution alias|was not found/i;
 
 function run(exe: string, args: string[]): Promise<RunResult> {
@@ -78,7 +85,7 @@ function interpreter(): Promise<Interpreter | null> {
     const tried = candidates();
     for (const candidate of tried) {
       const result = await run(candidate.exe, [...candidate.args, "-c", "import sys; print(sys.executable)"]);
-      if (result.code === 0 && result.stdout.trim() && !STORE_STUB.test(`${result.stdout}\n${result.stderr}`)) {
+      if (result.code === 0 && result.stdout.trim() && !STORE_STUB.test(result.stderr)) {
         return candidate;
       }
     }

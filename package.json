@@ -76,6 +76,7 @@
     "extensions/",
     "schema/",
     "data/",
+    "charts/",
     "requirements.txt",
     "runtime-plugin.json",
     "README.md",

@@ -14,7 +14,8 @@ they have different rules:
 | Document something | Any file except the generated trees |
 
 **Never edit the generated trees in place** — `skills/`, `agents/`, `scripts/`,
-`extensions/`, `schema/`, `data/`, `requirements.txt` and `runtime-plugin.json`
+`extensions/`, `schema/`, `data/`, `charts/` (when upstream ships it),
+`requirements.txt` and `runtime-plugin.json`
 are rebuilt from `vendor/` on every sync, so an edit there is discarded without
 warning. They are committed (so a
 git-source install needs no build step) and CI asserts they match the sync
@@ -37,20 +38,61 @@ The upstream Claude Code plugin is vendored at a pinned tag and transformed;
 
 Six points are worth calling out because they are not cosmetic:
 
-**Agent frontmatter is rewritten.** Upstream's `model: sonnet`, `maxTurns` and
+**Agent frontmatter is rewritten.** Upstream's `model:`, `maxTurns` and
 capitalised tool names are Claude Code fields. `model` and `maxTurns` are dropped
-(pi-subagents removed turn budgets in 0.59.0, and `model: sonnet` is no selector
-in either runtime), so an agent carries no model and no `thinking`; the tools
+(pi-subagents removed turn budgets in 0.59.0, and neither `model: sonnet`, on 15
+agents, nor `model: opus`, on `seo-cluster`, `seo-content`, `seo-drift`,
+`seo-geo` and `seo-sxo`, is a selector in either runtime), so an agent carries
+no model and no `thinking`, and upstream's choice of a stronger model for those
+five is not carried over. The tools
 become an explicit lowercase `tools` allowlist and `systemPromptMode` and the
 `inherit*` flags are added. pi has
-no built-in web fetch or search tool, so `WebFetch`/`WebSearch` are dropped
-rather than left in an allowlist where they would silently grant nothing. The
+no built-in web fetch or search tool, so `WebFetch`/`WebSearch` are dropped.
+omp does have `web_search`, but one agent file serves both hosts, and
+pi-subagents checks every allowlisted name against pi's registry before the
+first turn and fails the run on a missing one: granting it would break the
+agent on pi. The
 agents that referenced them — `seo-cluster`, `seo-flow`, `seo-geo`, `seo-local`,
 `seo-maps`, `seo-sxo` — can still fetch, via the Python fetchers or an MCP
 server; they just do not get a tool grant they cannot use. Their **prose** is
 rewritten too: an instruction to "call WebFetch" now names the packaged
 `fetch_page.py` fetcher or a web-fetch MCP tool, so the body never points at a
 tool the agent does not have.
+
+**Skill prose is rewritten the same way.** Skills are read by the parent model,
+which on pi has no `WebFetch`, no `WebSearch` and no `~/.claude/settings.json`.
+`WebSearch` becomes "web search" (omp's `web_search`, or a web-search MCP tool),
+each `WebFetch` names the packaged fetcher or a web-fetch tool, and API-key
+checks point at the environment instead of Claude Code's settings file
+(`SKILL_REWRITES` in `tools/sync.mjs`). The build fails if any of these names
+survives in `skills/` or `agents/`.
+
+**The schema validator is an extension, not a hook.** Upstream's PostToolUse
+hook becomes `extensions/seo-schema-validator.ts`: after a successful `edit` or
+`write` of an `.html`, `.htm`, `.jsx`, `.tsx`, `.vue`, `.svelte`, `.php` or
+`.ejs` file that contains JSON-LD, it runs `scripts/validate_schema_hook.py` on
+a system Python (`CLAUDE_SEO_PYTHON`, then `python3`, then `python`; `py -3`
+first on Windows) and appends its findings to the tool result as
+`[seo-schema] …`. It never fails the write; a missing Python logs one
+`[seo-schema] validator unavailable` line to stderr per session. To turn it off,
+exclude it on pi with `pi config`, or in settings with
+`{"source": "npm:claude-seo-pi", "extensions": ["!extensions/seo-schema-validator.ts"]}`;
+on omp, toggle it in `/extensions` or list `extension-module:seo-schema-validator`
+under `disabledExtensions`. Its interpreter probe accepts a Microsoft Store
+Python, which upstream's `run-python-hook.js` rejects because the real
+`sys.executable` lives under `WindowsApps\`.
+
+**DataForSEO responses are filtered.** Upstream's installer points the MCP
+server at `extensions/dataforseo/field-config.json` through `FIELD_CONFIG_PATH`,
+which keeps only SEO-relevant fields (upstream measures ~75% fewer tokens). The
+sync ships that file at the same path in the package, and the README's MCP block
+sets the variable.
+
+**`seo-cockpit` is not ported.** Upstream's `plugins/seo-cockpit` is a Claude
+Code mod (a function-hook plugin) that checks paid API calls against the
+DataForSEO budget before they run and shows a live audit status line. Neither
+host has that hook surface; the skills still run `dataforseo_costs.py check`
+before paid calls, as upstream's skills do, but nothing enforces it.
 
 **Agents inherit the session's model, and omp does not inherit its thinking
 level.** With no `model`, both runtimes run an agent on the parent's model. omp

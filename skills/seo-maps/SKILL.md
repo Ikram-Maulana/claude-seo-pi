@@ -130,7 +130,7 @@ Audits the 25 fields that affect Google Business Profile quality and ranking.
 
 ### Tier 0 Workflow
 
-1. Fetch the business website via WebFetch
+1. Fetch the business website with the packaged fetcher (`fetch_page.py`)
 2. Extract any visible GBP signals (Maps embed, place references, review widgets)
 3. Apply static checklist based on detectable signals
 4. Mark undetectable fields as "Unknown (requires DataForSEO for live data)"
@@ -195,7 +195,7 @@ Check business listing consistency across Google, Bing Places, Apple, and OSM.
 
 1. Search for business name on each platform:
    - Google: infer from GBP data or Maps SERP result
-   - Bing: `WebFetch https://www.bing.com/maps?q=BUSINESS+NAME+LOCATION`
+   - Bing: fetch `https://www.bing.com/maps?q=BUSINESS+NAME+LOCATION`
    - Apple: manual check (no public API -- verify/claim Apple business listing presence; treat Apple Business launch/rename claims as TechRadar-sourced until confirmed by Apple primary)
    - OSM: Overpass or Nominatim search
 2. Extract NAP (Name, Address, Phone) from each source

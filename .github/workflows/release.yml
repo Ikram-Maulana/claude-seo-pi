@@ -129,8 +129,17 @@ jobs:
           CLAUDE_SEO_PYTHON: python3
         run: node tools/upstream-tests.mjs
 
+  # The whole CI workflow, run at the tagged commit. The extension typecheck,
+  # the Python 3.10-3.14 runtime matrix and the tarball checks live only there,
+  # and a tag can name a commit CI never ran on, or ran on and failed.
+  ci:
+    needs: verify
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   publish:
-    needs: [verify, upstream-suite]
+    needs: [verify, upstream-suite, ci]
     runs-on: ubuntu-latest
     # A tag push alone must not publish: this environment carries a required
     # reviewer (repository Settings > Environments), so the job pauses until a

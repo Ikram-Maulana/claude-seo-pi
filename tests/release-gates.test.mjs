@@ -7,7 +7,17 @@
 import { strict as assert } from "node:assert";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
@@ -15,6 +25,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { parse } from "yaml";
 
+import { documentedCount, VERSION_DESELECTED, versionDeselected } from "../tools/upstream-tests.mjs";
 import { actionPinProblems, MIN_ACTION_MAJOR } from "../tools/verify.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,7 +34,8 @@ const workflow = (name) =>
 
 /** Every shell line a job runs, flattened. */
 function runs(job) {
-  return job.steps.map((step) => step.run ?? "").join("\n");
+  // A job that calls a reusable workflow has `uses` and no steps of its own.
+  return (job.steps ?? []).map((step) => step.run ?? "").join("\n");
 }
 
 test("the publish job cannot start before verify and the upstream suite pass", () => {
@@ -31,6 +43,50 @@ test("the publish job cannot start before verify and the upstream suite pass", (
   const needs = [publish.needs].flat();
   assert.ok(needs.includes("verify"), "publish no longer waits for verify");
   assert.ok(needs.includes("upstream-suite"), "publish no longer waits for the upstream suite");
+});
+
+test("the release runs the whole CI workflow at the tagged commit before publishing", () => {
+  // The typecheck, the Python runtime matrix and the tarball checks existed only
+  // in ci.yml, so a tag on a commit CI never saw reached the approval step.
+  const release = workflow("release.yml");
+  const callers = Object.entries(release.jobs).filter(([, job]) => job.uses === "./.github/workflows/ci.yml");
+  assert.equal(callers.length, 1, "release.yml no longer calls ci.yml");
+  const [name, job] = callers[0];
+  assert.ok([release.jobs.publish.needs].flat().includes(name), "publish does not wait for the CI run");
+  assert.deepEqual(job.permissions, { contents: "read" }, "the CI call must not inherit a wider token");
+  assert.ok("workflow_call" in workflow("ci.yml").on, "ci.yml can no longer be called by the release");
+  // GitHub cancels a run whose caller and callee share a concurrency group.
+  assert.notEqual(workflow("ci.yml").concurrency.group, release.concurrency.group);
+});
+
+test("CI keeps every gate, and none of them may fail softly", () => {
+  const ci = workflow("ci.yml");
+  const build = runs(ci.jobs.build);
+  assert.match(build, /node tools\/verify\.mjs/, "structure verification is gone");
+  assert.match(build, /node --test 'tests\/\*\.test\.mjs'/, "the unit tests are gone");
+  assert.match(build, /node tools\/scan-secrets\.mjs/, "the secret scan is gone");
+  assert.match(build, /npm pack --dry-run/, "the tarball check is gone");
+
+  // The typecheck is the only thing that compiles the extensions; a file
+  // missing from its list ships without ever being type-checked.
+  const typecheck = stepRun(ci.jobs.build, "Typecheck the extensions");
+  assert.match(typecheck, /tsc -p tsconfig\.json/);
+  for (const file of readdirSync(join(repoRoot, "src", "extensions")).filter((f) => f.endsWith(".ts"))) {
+    assert.ok(typecheck.includes(`src/extensions/${file}`), `${file} is not type-checked in CI`);
+  }
+
+  const lenient = [];
+  for (const [name, job] of Object.entries(ci.jobs)) {
+    if ("continue-on-error" in job) {
+      lenient.push(name);
+    }
+    for (const step of job.steps ?? []) {
+      if ("continue-on-error" in step) {
+        lenient.push(`${name}: ${step.name ?? step.uses ?? step.run}`);
+      }
+    }
+  }
+  assert.deepEqual(lenient, [], "continue-on-error lets a failed CI gate pass, and the release reuses CI");
 });
 
 /** The shell a named step runs, failing the test when the step is gone. */
@@ -71,7 +127,7 @@ test("no release gate can fail without failing the release", () => {
     if ("continue-on-error" in job) {
       lenient.push(name);
     }
-    for (const step of job.steps) {
+    for (const step of job.steps ?? []) {
       if ("continue-on-error" in step) {
         lenient.push(`${name}: ${step.name ?? step.uses ?? step.run}`);
       }
@@ -94,7 +150,7 @@ test("the release publishes with provenance, as latest, and only for v* tags", (
 test("checkouts keep no credentials and the workflows run one at a time", () => {
   for (const name of ["ci.yml", "release.yml"]) {
     for (const [jobName, job] of Object.entries(workflow(name).jobs)) {
-      for (const step of job.steps.filter((s) => String(s.uses ?? "").startsWith("actions/checkout@"))) {
+      for (const step of (job.steps ?? []).filter((s) => String(s.uses ?? "").startsWith("actions/checkout@"))) {
         assert.equal(
           step.with?.["persist-credentials"],
           false,
@@ -228,16 +284,23 @@ test("vendor.mjs refuses an archive whose hash does not match the lock", () => {
  * the status under test for the real run, so this exercises the harness's own
  * exit handling without needing a Python environment.
  */
-function harnessWith(pytestStatus, probeStatus = 0) {
+function harnessWith(pytestStatus, probeStatus = 0, { ci = false } = {}) {
   const work = mkdtempSync(join(tmpdir(), "upstream-harness-"));
   try {
     const stub = join(work, "python");
     writeFileSync(stub, `#!/bin/sh\n[ "$1" = "-c" ] && exit ${probeStatus}\nexit ${pytestStatus}\n`);
     chmodSync(stub, 0o755);
+    // The stand-in collects nothing, so its count never matches CONTRIBUTING.md;
+    // `CI` decides whether that mismatch fails the run.
+    const env = { ...process.env, CLAUDE_SEO_PYTHON: stub };
+    delete env.CI;
+    if (ci) {
+      env.CI = "true";
+    }
     return spawnSync(process.execPath, [join(repoRoot, "tools", "upstream-tests.mjs")], {
       cwd: repoRoot,
       encoding: "utf-8",
-      env: { ...process.env, CLAUDE_SEO_PYTHON: stub },
+      env,
     });
   } finally {
     rmSync(work, { recursive: true, force: true });
@@ -261,6 +324,42 @@ test(
     assert.doesNotMatch(passed.stdout, /deselected on Python/);
   }
 );
+
+test("a suite count that disagrees with CONTRIBUTING.md fails in CI and warns locally", NEEDS_POSIX, () => {
+  // The documented count drifted once (813 vs 874) while a test that only
+  // checked its shape stayed green; the harness now compares the measured one.
+  const ci = harnessWith(0, 0, { ci: true });
+  assert.equal(ci.status, 1, ci.stdout);
+  assert.match(ci.stderr, /CONTRIBUTING\.md says \d+ of \d+ for this Python; the run measured 0 of 0/);
+
+  const local = harnessWith(0);
+  assert.equal(local.status, 0, local.stderr);
+  assert.match(local.stderr, /a warning outside CI/);
+});
+
+test("documentedCount picks the figure for the Python that ran", () => {
+  const line = "npm run test:upstream        # 878 of 999 upstream tests on Python 3.14, 879 below it";
+  assert.deepEqual(documentedCount(line, [3, 14]), { ran: 878, total: 999 });
+  assert.deepEqual(documentedCount(line, [4, 0]), { ran: 878, total: 999 });
+  assert.deepEqual(documentedCount(line, [3, 12]), { ran: 879, total: 999 });
+  assert.deepEqual(documentedCount(line, null), { ran: 879, total: 999 }, "an unknown version counts as older");
+  assert.equal(documentedCount("no count here", [3, 12]), null);
+});
+
+test("versionDeselected applies an entry from its minimum Python up, and never to an unknown one", () => {
+  // CI runs the suite on 3.12: an inverted comparison would silently drop a
+  // hostile-input test there, and the stub-based harness test takes the `null`
+  // path, so it would never notice.
+  for (const { entry, minPython } of VERSION_DESELECTED) {
+    const [major, minor] = minPython;
+    const applies = (version) => versionDeselected(version).some((e) => e.entry === entry);
+    assert.equal(applies([major, minor]), true, `${entry} must be deselected on ${major}.${minor}`);
+    assert.equal(applies([major + 1, 0]), true, `${entry} must be deselected on ${major + 1}.0`);
+    assert.equal(applies([major, minor - 1]), false, `${entry} must run on ${major}.${minor - 1}`);
+    assert.equal(applies([major - 1, minor + 5]), false, `${entry} must run on ${major - 1}.${minor + 5}`);
+    assert.equal(applies(null), false, `${entry} must run when the version is unknown`);
+  }
+});
 
 test("an explicit CLAUDE_SEO_PYTHON without pytest fails instead of falling back", NEEDS_POSIX, () => {
   // Falling through to .venv or python3 would report a run on an interpreter

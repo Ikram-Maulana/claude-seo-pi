@@ -154,7 +154,7 @@ Citations declining for traditional pack rankings but **3 of top 5 AI visibility
   2. LocalBusiness JSON-LD schema
   3. Any visible GBP data
   - Flag any discrepancies between these three sources
-- Citation presence on Tier 1 directories (check via WebFetch or site: search patterns):
+- Citation presence on Tier 1 directories (check via `fetch_page.py` or site: search patterns):
   - Google Business Profile signals on page
   - Yelp: `site:yelp.com "Business Name"`
   - BBB: `site:bbb.org "Business Name"`

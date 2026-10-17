@@ -12,6 +12,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BLOCK_SCALAR, descriptionOf, frontmatterOf, parseFrontmatter } from "../tools/frontmatter.mjs";
 import { DESELECTED, VERSION_DESELECTED } from "../tools/upstream-tests.mjs";
+import { GENERATED } from "../tools/sync.mjs";
+import { upstreamDivergences } from "../tools/verify.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const agentsDir = join(repoRoot, "agents");
@@ -134,6 +136,16 @@ test("no agent tells the model to call a tool it does not have", () => {
   assert.deepEqual(offenders, [], "these agents tell the model to call a tool they lack");
 });
 
+test("no skill or agent names a tool or path only Claude Code has", () => {
+  // The test above covers agent bodies only, and skills went on saying "using
+  // WebSearch" and "check ~/.claude/settings.json" to the parent model.
+  const offenders = [...walk(skillsDir), ...walk(agentsDir)]
+    .filter((file) => /\.md$/i.test(file))
+    .filter((file) => /\bWeb(?:Fetch|Search)\b|~\/\.claude\//.test(readFileSync(file, "utf-8")))
+    .map((file) => relative(repoRoot, file));
+  assert.deepEqual(offenders, [], "add a SKILL_REWRITES or BODY_REWRITES entry in tools/sync.mjs");
+});
+
 test("no Claude Code placeholder survives in a file the model reads", () => {
   const offenders = [...walk(skillsDir), ...walk(agentsDir)]
     .filter((file) => /\.(md|txt|json|ya?ml)$/i.test(file))
@@ -165,28 +177,10 @@ test("every shipped Python file is byte-identical to upstream", () => {
   // `scripts/` is copied wholesale from the vendored tree and this port does not
   // patch it: a local edit is a divergence to carry on every upstream bump, and
   // it destroys the value of `diff -r scripts/ vendor/.../scripts/` as a review
-  // signal. The one legitimate difference is `validate_schema_hook.py`, from
-  // upstream hooks/.
-  const FROM_HOOKS = "validate_schema_hook.py";
-  const upstreamDir = join(repoRoot, "vendor", "claude-seo", "scripts");
-
-  const differences = [];
-  for (const file of readdirSync(join(repoRoot, "scripts")).filter((f) => f.endsWith(".py"))) {
-    const shipped = readFileSync(join(repoRoot, "scripts", file));
-    let upstream;
-    try {
-      upstream = readFileSync(join(upstreamDir, file));
-    } catch {
-      if (file !== FROM_HOOKS) {
-        differences.push(`${file} (not in upstream scripts/ and not the hooks file)`);
-      }
-      continue;
-    }
-    if (!shipped.equals(upstream)) {
-      differences.push(`${file} (differs from upstream — this port does not patch Python)`);
-    }
-  }
-  assert.deepEqual(differences, [], "the shipped Python must stay identical to upstream");
+  // signal. It covers the launcher, the schema hook (upstream's
+  // hooks/validate-schema.py, renamed) and extensions/*/scripts/ as well: only
+  // top-level scripts/*.py used to be compared.
+  assert.deepEqual(upstreamDivergences(), [], "the shipped Python must stay identical to upstream");
 });
 
 test("sync.mjs does not patch upstream Python", () => {
@@ -405,7 +399,7 @@ test("the documented upstream-suite count matches what the harness reports", () 
   );
   assert.ok(
     total > 900,
-    `CONTRIBUTING.md says the suite has ${total} tests; upstream ships ~962, so this looks stale`
+    `CONTRIBUTING.md says the suite has ${total} tests; upstream v2.4.2 ships 999, so this looks stale`
   );
 });
 
@@ -448,7 +442,7 @@ test("AGENTS.md carries the operational facts an agent needs", () => {
 
   // The generated trees must be called out, or an agent edits one and loses the
   // work on the next sync.
-  for (const tree of ["skills/", "agents/", "scripts/", "extensions/"]) {
+  for (const tree of GENERATED.map((dir) => `\`${dir}/\``)) {
     assert.ok(agents.includes(tree), `AGENTS.md does not mention the generated tree ${tree}`);
   }
   assert.match(agents, /generated/i, "AGENTS.md must say these trees are generated");

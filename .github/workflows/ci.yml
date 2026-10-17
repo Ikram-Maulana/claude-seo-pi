@@ -6,6 +6,9 @@ on:
     # that does not match skips every push silently.
     branches: [main, development]
   pull_request:
+  # release.yml runs this whole workflow at the tagged commit before it can
+  # publish, so the release gates are these gates and cannot drift from them.
+  workflow_call:
 
 # Read-only: nothing in CI writes to the repository, and a pull request from a
 # fork must not get a token that could.
@@ -64,7 +67,7 @@ jobs:
 
       # `verify` checks the shape of the tree; these check that the build still
       # *produces* the right shape. The glob is explicit: `node --test tests/`
-      # only accepts a directory from Node 22.18, and this job pins 22.
+      # fails on Node 22 and later, which take the argument as a file to run.
       - name: Unit tests
         run: node --test 'tests/*.test.mjs'
 
