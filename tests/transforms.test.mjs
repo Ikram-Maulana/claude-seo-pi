@@ -229,7 +229,12 @@ test("the SERP agents are told where their SERP data comes from and not to inven
     const body = read("agents", `${name}.md`);
     assert.match(body, /from the task/, `${name} is not told the caller supplies the SERP data`);
     assert.match(body, /never infer rankings/, `${name} may fabricate SERP results`);
+    // The pre-delivery checklist must accept the Limitations outcome too.
+    assert.match(body, /- \[ \] .*SERP.*, or Limitations says SERP/, `${name}'s checklist has no exit for missing SERP data`);
   }
+  // The caller supplies results for a few keywords; the agent expands to 30-50.
+  assert.match(read("agents", "seo-cluster.md"), /Measure overlap only between keywords whose results/);
+  assert.match(read("agents", "seo-cluster.md"), /never estimate its overlap/);
 });
 
 test("no shipped skill or agent points at a settings env block neither host has", () => {

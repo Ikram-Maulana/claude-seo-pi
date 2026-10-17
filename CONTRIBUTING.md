@@ -57,10 +57,12 @@ the agents that referenced them, `seo-geo`, `seo-local` and `seo-maps` hold
 `read`, `find` and `grep`, so it works on the page the caller fetched and passed
 in its task, and says so when none was passed. `seo-sxo` and `seo-cluster` have
 `bash`, but no SERP script exists, so their SERP data comes from the task too:
-the `seo` and `seo-audit` orchestrators tell the parent, which can search, to
-pass the top-10 results when it spawns them. They use a web-search or
-DataForSEO tool only if one is in their tool list, and otherwise report SERP
-analysis as a limitation rather than infer rankings. Their **prose** is
+the `seo` and `seo-audit` orchestrators tell the parent to pass the top-10
+results from its web search or DataForSEO, if it has either (on plain pi it
+has neither), and to spawn the agent anyway when it does not. The agents use a
+web-search or DataForSEO tool only if one is in their tool list, measure
+overlap only between keywords that came with results, and otherwise report
+SERP analysis as a limitation rather than infer rankings. Their **prose** is
 rewritten to match (`BODY_REWRITES`), so the body never points at a tool the
 agent does not have; a test fails if an agent without `bash` is told to run
 the launcher.
@@ -78,8 +80,11 @@ hook becomes `extensions/seo-schema-validator.ts`: after a successful `edit` or
 `write` of an `.html`, `.htm`, `.jsx`, `.tsx`, `.vue`, `.svelte`, `.php` or
 `.ejs` file that contains JSON-LD, it runs `scripts/validate_schema_hook.py` on
 a system Python (`CLAUDE_SEO_PYTHON`, then `python3`, then `python`; `py -3`
-first on Windows) and appends its findings to the tool result as
-`[seo-schema] …`. It never fails the write; a missing Python logs one
+first on Windows) and appends its findings to the tool result, one
+`[seo-schema] <absolute path>: …` block per file. One edit may validate several
+files: omp's `paths` array and an apply_patch body's `Add File`, `Update File`
+and `Move to` headers are all read. omp's patch-mode `edits[].rename` target is
+not, so a renamed file goes unvalidated. It never fails the write; a missing Python logs one
 `[seo-schema] validator unavailable` line to stderr per session. To turn it off,
 exclude it on pi with `pi config`, or in settings with
 `{"source": "npm:claude-seo-pi", "extensions": ["!extensions/seo-schema-validator.ts"]}`;

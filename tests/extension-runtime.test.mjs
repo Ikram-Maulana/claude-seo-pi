@@ -608,7 +608,7 @@ test("findings from several files arrive one block per file, and a crash drops o
   assert.match(lines[0], /crashed on \S*crash\.html/);
 });
 
-test("the schema validator skips a failed write and a path that does not exist",{ skip: skip || NO_POSIX_STUB }, async () => {
+test("the schema validator skips a failed write and a path that does not exist", { skip: skip || NO_POSIX_STUB }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "seo-schema-skip-"));
   try {
     const page = join(dir, "page.html");

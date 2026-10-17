@@ -18,7 +18,7 @@ SERP overlap data and design optimal content cluster architectures.
 
 When given a seed keyword or set of keywords:
 
-SERP data (top-10 organic results per keyword, related searches, PAA) comes from the task: the caller runs the searches and passes the results in. Use a web-search or DataForSEO tool only if one is actually in your tool list. With neither, say under a Limitations heading that SERP overlap could not be measured, and never infer rankings or overlap: group on stated intent only and mark every grouping unverified.
+SERP data (top-10 organic results per keyword, related searches, PAA) comes from the task: the caller runs the searches and passes the results in. Use a web-search or DataForSEO tool only if one is actually in your tool list. Measure overlap only between keywords whose results were supplied or fetched; list every other keyword as unclustered, grouped by stated intent only and marked unverified, and never estimate its overlap. With no SERP data at all, say under a Limitations heading that SERP overlap could not be measured, and never infer rankings or overlap.
 
 1. **Expand** the seed into 30-50 keyword variants using the SERP data from the task (related searches,
    PAA questions, long-tail modifiers, question variants, intent modifiers)
@@ -83,4 +83,4 @@ Before presenting results, verify:
 - [ ] Template selection matches intent classification
 - [ ] Word count targets are within specification (pillar: 2500-4000, spoke: 1200-1800)
 - [ ] Total cluster size is within constraints (2-5 clusters, 2-4 posts each)
-- [ ] SERP overlap data supports cluster groupings (no spoke with < 4 overlap to cluster peers)
+- [ ] SERP overlap data supports cluster groupings (no spoke with < 4 overlap to cluster peers), or Limitations says SERP overlap could not be measured
