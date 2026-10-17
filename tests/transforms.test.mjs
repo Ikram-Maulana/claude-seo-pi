@@ -7,12 +7,13 @@
  * These assert the properties the host depends on, not the bytes.
  */
 import { strict as assert } from "node:assert";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { frontmatterOf, parseFrontmatter } from "../tools/frontmatter.mjs";
+import { convertAgent, portVersion } from "../tools/sync.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (...parts) => readFileSync(join(repoRoot, ...parts), "utf-8");
@@ -97,4 +98,80 @@ test("the audit core is advertised and the four skill-reached agents are not", (
     assert.ok(!advertised(all[name]), `${name} is reached through its own skill and stays out of the catalog`);
   }
   assert.ok(Object.values(all).filter(advertised).length <= 16, "pi-subagents drops advertised agents past 16");
+});
+
+test("agents carry the managed flags as bare YAML booleans", () => {
+  // pi-subagents reads `advertise` as a boolean; a quoted "true" is a string.
+  for (const file of agentFiles) {
+    const frontmatter = frontmatterOf(read("agents", file));
+    for (const key of ["advertise", "inheritProjectContext", "inheritSkills"]) {
+      assert.match(frontmatter, new RegExp(`^${key}: (?:true|false)$`, "m"), `${file}: ${key} is not a bare boolean`);
+    }
+  }
+  assert.ok(
+    agentFiles.some((file) => /^advertise: true$/m.test(read("agents", file))),
+    "no agent is advertised at all"
+  );
+});
+
+test("an agent's unmanaged keys keep their YAML type, and a non-scalar fails the sync", () => {
+  const source = (extra) =>
+    ["---", "name: scout", "description: A scout agent that reads pages.", "tools: Read", ...extra, "---", "body", ""].join("\n");
+
+  const converted = parseFrontmatter(frontmatterOf(convertAgent(source(['color: "true"', "retries: 3", "note: plain"]), "scout.md")));
+  assert.equal(converted.raw.color, "true", "a quoted string became a boolean");
+  assert.equal(converted.raw.retries, 3);
+  assert.equal(converted.raw.note, "plain");
+  assert.equal(converted.raw.advertise, true, "the managed flag must stay a bare boolean");
+
+  assert.throws(() => convertAgent(source(["hooks:", "  - a", "  - b"]), "scout.md"), /"hooks" is a list/);
+  assert.throws(() => convertAgent(source(["meta:", "  k: v"]), "scout.md"), /"meta" is a mapping/);
+});
+
+test("skill-dir placeholders read as prose, not as a path to type", () => {
+  // `${CLAUDE_SKILL_DIR}` in backticks became `this skill's directory` in
+  // backticks, which reads as a literal path.
+  const offenders = [];
+  for (const { name } of skills) {
+    if (read("skills", name, "SKILL.md").includes("`this skill's directory`")) {
+      offenders.push(name);
+    }
+  }
+  assert.deepEqual(offenders, []);
+  assert.match(read("skills", "seo-image-gen", "SKILL.md"), /the directory containing this SKILL\.md/);
+});
+
+test("the package version is the upstream release plus a port revision", () => {
+  assert.equal(portVersion("2.4.2", "2.4.2"), "2.4.2-pi.0", "a plain version starts the scheme");
+  assert.equal(portVersion("2.4.2", "2.4.2-pi.3"), "2.4.2-pi.3", "the maintainer's revision is kept");
+  assert.equal(portVersion("2.4.3", "2.4.2-pi.3"), "2.4.3-pi.0", "a new upstream resets the revision");
+  assert.equal(portVersion("2.4.2", "2.4.2-beta.1"), "2.4.2-pi.0", "another prerelease shape is reset");
+  assert.equal(portVersion("2.4.2", "2.4.2-pi.01"), "2.4.2-pi.0", "a leading zero is not valid semver");
+  assert.equal(portVersion("2.4.2", undefined), "2.4.2-pi.0");
+  for (const bad of ["2.5.0-rc.1", "2.4", "v2.4.2", "2.4.2 ", undefined, 242]) {
+    assert.throws(() => portVersion(bad, "2.4.2-pi.0"), /usable release version/, `${JSON.stringify(bad)} was accepted`);
+  }
+
+  // And the shipped files agree on it.
+  const pkg = JSON.parse(read("package.json"));
+  assert.match(pkg.version, /^\d+\.\d+\.\d+-pi\.(?:0|[1-9]\d*)$/);
+  assert.equal(JSON.parse(read("runtime-plugin.json")).version, pkg.version, "runtime.py would report another version");
+  const lock = JSON.parse(read("package-lock.json"));
+  assert.equal(lock.version, pkg.version, "the lockfile root version drifted from package.json");
+  assert.equal(lock.packages[""].version, pkg.version);
+});
+
+test("the skill merge leaves the vendored tree as the archive shipped it", () => {
+  // The merge once copied the core references into the vendored extension
+  // copy, so the second sync read an upstream the archive does not contain.
+  const banana = join(repoRoot, "vendor", "claude-seo", "extensions", "banana", "skills", "seo-image-gen");
+  assert.ok(existsSync(join(banana, "SKILL.md")), "the vendored banana skill is gone");
+  assert.ok(
+    !existsSync(join(banana, "references")),
+    "sync wrote references/ into vendor/ (run `npm run vendor` to restore the archive, then fix the merge)"
+  );
+  // The shipped skill still carries the core references the merge keeps.
+  const core = readdirSync(join(repoRoot, "vendor", "claude-seo", "skills", "seo-image-gen", "references"));
+  const shipped = new Set(readdirSync(join(repoRoot, "skills", "seo-image-gen", "references")));
+  assert.deepEqual(core.filter((file) => !shipped.has(file)), [], "the merged skill lost core references");
 });

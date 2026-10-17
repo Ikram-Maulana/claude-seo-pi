@@ -12,6 +12,8 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { importsHostAtRuntime } from "../tools/verify.mjs";
+
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const srcExtDir = join(repoRoot, "src", "extensions");
 const extensions = readdirSync(srcExtDir).filter((f) => f.endsWith(".ts"));
@@ -55,15 +57,39 @@ test("the extensions do not call API members that do not exist", () => {
 
 test("the extensions import the host type-only", () => {
   // A runtime import of the host would have to resolve to @earendil-works/* on
-  // pi and @oh-my-pi/* on omp, so it is erased deliberately.
-  const offenders = [];
-  for (const file of extensions) {
-    const source = readFileSync(join(srcExtDir, file), "utf-8");
-    if (/^\s*import\s+(?!type\b)[^\n]*from\s+["']@(?:earendil-works|oh-my-pi)\//m.test(source)) {
-      offenders.push(file);
-    }
-  }
+  // pi and @oh-my-pi/* on omp, so it is erased deliberately. Same rule verify
+  // applies to the built copies.
+  const offenders = extensions.filter((file) => importsHostAtRuntime(readFileSync(join(srcExtDir, file), "utf-8")));
   assert.deepEqual(offenders, [], "use `import type` for the host package");
+});
+
+test("the host-import check sees every form a runtime import takes", () => {
+  const runtime = {
+    "single line": 'import { x } from "@earendil-works/pi-coding-agent";',
+    "multi-line": 'import {\n  ExtensionAPI,\n  ToolResultEvent,\n} from "@earendil-works/pi-coding-agent";',
+    "inline type specifier (Node keeps the empty import)": 'import { type ExtensionAPI } from "@oh-my-pi/pi-coding-agent";',
+    "default import whose name starts with type": 'import  type_helpers from "@oh-my-pi/pi-coding-agent";',
+    "side effect": 'import "@earendil-works/pi-coding-agent";',
+    "dynamic": 'const host = await import("@earendil-works/pi-coding-agent");',
+    "dynamic template": "const host = await import(`@oh-my-pi/pi-coding-agent`);",
+    "require": 'const host = require("@earendil-works/pi-coding-agent");',
+    "re-export": 'export { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
+    "star re-export": 'export * from "@oh-my-pi/pi-coding-agent";',
+  };
+  for (const [label, source] of Object.entries(runtime)) {
+    assert.ok(importsHostAtRuntime(source), `${label} import was not detected`);
+  }
+
+  const erased = {
+    "import type": 'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
+    "multi-line import type": 'import type {\n  ExtensionAPI,\n  ToolResultEvent,\n} from "@oh-my-pi/pi-coding-agent";',
+    "export type": 'export type { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
+    "node builtin": 'import { execFile } from "node:child_process";',
+    "in a comment": '// import { x } from "@earendil-works/pi-coding-agent";\n/* await import("@oh-my-pi/x") */',
+  };
+  for (const [label, source] of Object.entries(erased)) {
+    assert.ok(!importsHostAtRuntime(source), `${label} was flagged, but it is erased or not the host`);
+  }
 });
 
 test("the generated extensions match their sources", () => {
@@ -86,19 +112,18 @@ test("the generated extensions match their sources", () => {
   assert.deepEqual(mismatched, [], "run `npm run sync` to regenerate extensions/");
 });
 
-test("the schema validator stays non-blocking", () => {
-  // The hook must never return a result that could fail the tool call it
-  // observes: a broken Python environment should cost a lint, not an edit.
-  // `slice(indexOf(...))` became `slice(-1)` when the handler was absent, so
-  // removing the hook entirely left this green — assert presence first.
-  const source = readFileSync(join(srcExtDir, "seo-schema-validator.ts"), "utf-8");
+test("the schema validator can never fail the tool call it observes", () => {
+  // The handler appends findings to the result, but it is a lint, not a gate:
+  // a broken Python environment must cost a lint, not an edit. So it never
+  // sets isError and never throws. `slice(indexOf(...))` became `slice(-1)`
+  // when the handler was absent, so removing the hook entirely once left a
+  // check like this green — assert presence first.
+  const source = stripComments(readFileSync(join(srcExtDir, "seo-schema-validator.ts"), "utf-8"));
   const start = source.indexOf('pi.on("tool_result"');
   assert.ok(start !== -1, "the tool_result handler is gone — the hook no longer runs");
+  assert.ok(source.slice(start).length > 100, "the tool_result handler looks truncated");
 
-  const handler = source.slice(start);
-  assert.ok(handler.length > 100, "the tool_result handler looks truncated");
-  assert.ok(
-    !/return\s+\{/.test(handler),
-    "the tool_result handler returns a value, which would patch the tool result"
-  );
+  assert.doesNotMatch(source, /\bisError\s*:/, "the validator sets isError, which would fail the edit");
+  assert.doesNotMatch(source, /\bthrow\b/, "the validator throws, which the host reports as a failed call");
+  assert.match(source, /return\s*\{\s*content:/, "the handler no longer hands its findings to the model");
 });

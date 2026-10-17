@@ -15,6 +15,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { parse } from "yaml";
 
+import { actionPinProblems, MIN_ACTION_MAJOR } from "../tools/verify.mjs";
+
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const workflow = (name) =>
   parse(readFileSync(join(repoRoot, ".github", "workflows", name), "utf-8"));
@@ -31,21 +33,117 @@ test("the publish job cannot start before verify and the upstream suite pass", (
   assert.ok(needs.includes("upstream-suite"), "publish no longer waits for the upstream suite");
 });
 
+/** The shell a named step runs, failing the test when the step is gone. */
+function stepRun(job, name) {
+  const step = job.steps.find((s) => s.name === name);
+  assert.ok(step, `the "${name}" step is gone`);
+  return step.run ?? "";
+}
+
 test("release verify job keeps every gate that precedes an irreversible publish", () => {
   const { verify } = workflow("release.yml").jobs;
   const script = runs(verify);
-  assert.match(script, /GITHUB_REF#refs\/tags\/v/, "the tag-equals-version check is gone");
-  assert.match(script, /exit 1/, "the tag check no longer fails the job");
   assert.match(script, /node tools\/verify\.mjs/, "structure verification is gone");
   assert.match(script, /node --test/, "the unit tests are gone");
   assert.match(script, /node tools\/scan-secrets\.mjs/, "the secret scan is gone");
+
+  // Each check must fail its own step: one `exit 1` anywhere in the job used to
+  // satisfy this, so a gate whose `exit 1` was deleted still passed.
+  const tag = stepRun(verify, "Assert the tag matches package.json");
+  assert.match(tag, /GITHUB_REF#refs\/tags\/v/, "the tag-equals-version check is gone");
+  assert.match(tag, /exit 1/, "the tag check no longer fails the job");
+  const drift = stepRun(verify, "Assert the committed tree matches the sync output");
+  assert.match(drift, /git status --porcelain/);
+  assert.match(drift, /exit 1/, "the tree-drift check no longer fails the job");
 });
 
-test("the release publishes with provenance and only for v* tags", () => {
+test("the release runs the upstream suite with the runtime's own requirements", () => {
+  const job = workflow("release.yml").jobs["upstream-suite"];
+  const script = runs(job);
+  assert.match(script, /^node tools\/upstream-tests\.mjs$/m, "the release no longer runs the upstream suite");
+  assert.match(script, /pip install[\s\S]*pytest -r requirements\.txt/, "the suite's dependencies drifted from requirements.txt");
+});
+
+test("no release gate can fail without failing the release", () => {
+  const release = workflow("release.yml");
+  const lenient = [];
+  for (const [name, job] of Object.entries(release.jobs)) {
+    if ("continue-on-error" in job) {
+      lenient.push(name);
+    }
+    for (const step of job.steps) {
+      if ("continue-on-error" in step) {
+        lenient.push(`${name}: ${step.name ?? step.uses ?? step.run}`);
+      }
+    }
+  }
+  assert.deepEqual(lenient, [], "continue-on-error lets a failed gate through to npm publish");
+});
+
+test("the release publishes with provenance, as latest, and only for v* tags", () => {
   const release = workflow("release.yml");
   assert.deepEqual(release.on.push.tags, ["v*"]);
-  assert.match(runs(release.jobs.publish), /npm publish --provenance/);
+  const publish = runs(release.jobs.publish);
+  assert.match(publish, /npm publish --provenance/);
+  // Every version is a `-pi.N` prerelease; npm 11 refuses to publish one
+  // without a dist-tag, and any other tag hides it from a plain install.
+  assert.match(publish, /npm publish\b[^\n]*--tag latest/);
   assert.equal(release.jobs.publish.permissions["id-token"], "write");
+});
+
+test("checkouts keep no credentials and the workflows run one at a time", () => {
+  for (const name of ["ci.yml", "release.yml"]) {
+    for (const [jobName, job] of Object.entries(workflow(name).jobs)) {
+      for (const step of job.steps.filter((s) => String(s.uses ?? "").startsWith("actions/checkout@"))) {
+        assert.equal(
+          step.with?.["persist-credentials"],
+          false,
+          `${name} ${jobName}: checkout leaves the token in .git/config for every later step`
+        );
+      }
+    }
+  }
+  const ci = workflow("ci.yml");
+  assert.deepEqual(ci.permissions, { contents: "read" }, "CI's token is no longer read-only");
+  assert.equal(ci.concurrency?.["cancel-in-progress"], true, "a superseded CI run keeps running");
+  const release = workflow("release.yml");
+  // Per tag: a shared group keeps one pending run and cancels the older one.
+  assert.equal(release.concurrency?.group, "release-${{ github.ref }}");
+  assert.equal(release.concurrency?.["cancel-in-progress"], false, "a second tag would cancel an approved release");
+});
+
+test("the schema-hook smoke test demands the critical exit, not any failure", () => {
+  const step = workflow("ci.yml").jobs["python-runtime"].steps.find((s) => /broken\.html/.test(s.run ?? ""));
+  assert.ok(step, "the broken-markup smoke test is gone");
+  // `if python3 … broken.html; then fail` accepted a crash as a rejection.
+  assert.match(step.run, /-ne 2/, "the step must require exit status 2");
+});
+
+test("Dependabot keeps the SHA-pinned actions current on development", () => {
+  const config = parse(readFileSync(join(repoRoot, ".github", "dependabot.yml"), "utf-8"));
+  const actions = config.updates.find((u) => u["package-ecosystem"] === "github-actions");
+  assert.ok(actions, "nothing updates the pinned action SHAs");
+  assert.equal(actions["target-branch"], "development");
+  assert.equal(actions.schedule.interval, "weekly");
+});
+
+test("the action pin check accepts only a commit SHA with its release", () => {
+  const sha = "3d3c42e5aac5ba805825da76410c181273ba90b1";
+  assert.deepEqual(actionPinProblems(`      - uses: actions/checkout@${sha} # v7.0.1\n`), []);
+  assert.deepEqual(actionPinProblems("      - uses: ./local-action\n"), [], "a local action has no version");
+
+  const rejected = {
+    "a bare major tag": "      - uses: actions/checkout@v7\n",
+    "a branch": "      - uses: actions/checkout@main\n",
+    "a SHA with no release comment": `      - uses: actions/checkout@${sha}\n`,
+    "a SHA with a major-only comment": `      - uses: actions/checkout@${sha} # v7\n`,
+    "a short SHA": "      - uses: actions/checkout@3d3c42e # v7.0.1\n",
+    "no version at all": "      - uses: actions/checkout\n",
+    [`a major below ${MIN_ACTION_MAJOR}`]: `      - uses: actions/checkout@${sha} # v${MIN_ACTION_MAJOR - 1}.9.0\n`,
+  };
+  for (const [label, line] of Object.entries(rejected)) {
+    assert.equal(actionPinProblems(line).length, 1, `${label} was accepted`);
+  }
 });
 
 test("the publish job waits on a protected environment, not just on a tag push", () => {
@@ -130,11 +228,11 @@ test("vendor.mjs refuses an archive whose hash does not match the lock", () => {
  * the status under test for the real run, so this exercises the harness's own
  * exit handling without needing a Python environment.
  */
-function harnessWith(pytestStatus) {
+function harnessWith(pytestStatus, probeStatus = 0) {
   const work = mkdtempSync(join(tmpdir(), "upstream-harness-"));
   try {
     const stub = join(work, "python");
-    writeFileSync(stub, `#!/bin/sh\n[ "$1" = "-c" ] && exit 0\nexit ${pytestStatus}\n`);
+    writeFileSync(stub, `#!/bin/sh\n[ "$1" = "-c" ] && exit ${probeStatus}\nexit ${pytestStatus}\n`);
     chmodSync(stub, 0o755);
     return spawnSync(process.execPath, [join(repoRoot, "tools", "upstream-tests.mjs")], {
       cwd: repoRoot,
@@ -146,9 +244,11 @@ function harnessWith(pytestStatus) {
   }
 }
 
+const NEEDS_POSIX = { skip: process.platform === "win32" ? "needs a POSIX shell stand-in" : false };
+
 test(
   "the upstream-suite harness exits non-zero when pytest fails, so the release gate can stop",
-  { skip: process.platform === "win32" ? "needs a POSIX shell stand-in" : false },
+  NEEDS_POSIX,
   () => {
     const failed = harnessWith(1);
     assert.notEqual(failed.status, 0, "a failing upstream suite must fail the job");
@@ -156,5 +256,17 @@ test(
 
     const passed = harnessWith(0);
     assert.equal(passed.status, 0, passed.stderr);
+    // The stand-in prints no version, which must count as an older Python:
+    // the version-conditional test then runs instead of being dropped.
+    assert.doesNotMatch(passed.stdout, /deselected on Python/);
   }
 );
+
+test("an explicit CLAUDE_SEO_PYTHON without pytest fails instead of falling back", NEEDS_POSIX, () => {
+  // Falling through to .venv or python3 would report a run on an interpreter
+  // nobody chose as the result for the one that was asked for.
+  const result = harnessWith(0, 1);
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /CLAUDE_SEO_PYTHON=.* cannot import pytest/);
+  assert.doesNotMatch(result.stdout, /upstream suite passed/);
+});

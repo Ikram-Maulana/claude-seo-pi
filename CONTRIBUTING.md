@@ -30,12 +30,12 @@ The upstream Claude Code plugin is vendored at a pinned tag and transformed;
 | Manifest | `.claude-plugin/plugin.json` | `package.json` → `pi` (omp accepts it too) |
 | Script root | `${CLAUDE_PLUGIN_ROOT}` | `$SEO_PLUGIN_ROOT`, exported by the extension |
 | Skill-local paths | `${CLAUDE_SKILL_DIR}` | relative to `SKILL.md` (both runtimes resolve this) |
-| Schema hook | `hooks/hooks.json` (PostToolUse) | `pi.on("tool_result")` in an extension |
+| Schema hook | `hooks/hooks.json` (PostToolUse) | `pi.on("tool_result")` in an extension, findings appended to the tool result |
 | Agents | native `agents/*.md` | same files, pi-subagents frontmatter |
 | Extension skills | `extensions/<ext>/skills/` | flattened into `skills/` |
 | Extension setup | `install.sh` → `~/.claude.json` | README section (`## Optional integrations`) |
 
-Four transforms are worth calling out because they are not cosmetic:
+Six points are worth calling out because they are not cosmetic:
 
 **Agent frontmatter is rewritten.** Upstream's `model: sonnet`, `maxTurns` and
 capitalised tool names are Claude Code fields. `model` and `maxTurns` are dropped
@@ -73,8 +73,8 @@ boundary there.
 **Four agents are held back from the parent catalog.** pi-subagents advertises at
 most 16 agents in the parent system prompt (`MAX_ADVERTISED_AGENTS`) and picks
 them in sorted order, so advertising all 20 would silently drop the four that
-sort last — `seo-sitemap`, `seo-sxo`, `seo-technical`, `seo-visual`, the first
-and third of which the audit orchestrator spawns unconditionally. The port
+sort last — `seo-sitemap`, `seo-sxo`, `seo-technical`, `seo-visual`, all four
+of which the audit orchestrator spawns unconditionally. The port
 advertises the audit core instead and keeps `seo-drift`, `seo-flow`,
 `seo-image-gen` and `seo-matomo` out: each is reached through its own skill,
 which names it, so a catalog entry buys nothing. All 20 stay dispatchable by
@@ -128,32 +128,63 @@ CI needs no secrets, so it runs the same on a fork as on this repository.
 A defect in upstream's own files (`scripts/*.py`, skill bodies) belongs in the
 upstream repository, not in a PR here.
 
+### Releases
+
+Every version is `<upstream>-pi.N`: the upstream release the tree ports, plus a
+port revision. Upstream v2.4.2 ships as `2.4.2-pi.0`, and the next fix to the
+port alone is `2.4.2-pi.1`, with no upstream release needed. The sync takes the
+upstream part from the vendored `plugin.json` and keeps N while that stays the
+same; a bump of `vendor/lock.json` to a new upstream resets it to `-pi.0`.
+semver orders these the way `pi update` compares them:
+2.4.0 < 2.4.2-pi.0 < 2.4.2-pi.1 < 2.4.3-pi.0.
+
+To cut a port-only release, bump the revision and rebuild:
+
+```bash
+npm version prerelease --preid pi --no-git-tag-version && npm run build
+```
+
+Commit the result, including `package-lock.json` and `runtime-plugin.json`: the
+lockfile carries the version too, and runtime.py reports the one in
+`runtime-plugin.json`. `verify` checks `runtime-plugin.json` against
+`package.json` and that the version has the `<upstream>-pi.N` shape; the unit
+tests catch a stale lockfile.
+
+Because every version is a prerelease, a semver range only ever matches
+revisions of the upstream release it names: `^2.4.2-pi.0` takes `2.4.2-pi.1` but
+never `2.4.3-pi.0`, and `^2.4.2` matches none of them. A plain install follows
+the `latest` dist-tag, which `release.yml` sets explicitly (`npm publish --tag
+latest`); npm refuses to publish a prerelease without one.
+
 Releases are cut by maintainers: pushing a `v*` tag starts `release.yml`, whose
 `publish` job then waits for approval in the `npm-release` environment before it
-publishes to npm. The tag must equal the `package.json` version, which the sync
-inherits from upstream. The environment's required reviewer and the `v*` tag
+publishes to npm. The tag is `v` plus the `package.json` version, for example
+`v2.4.2-pi.1`. The environment's required reviewer and the `v*` tag
 ruleset live in repository settings, not in the tree, so a fork that wants the
 same gate has to recreate both; if npm's trusted-publisher entry names an
 environment, it must be `npm-release`.
 
 ### The vendored upstream suite
 
-`npm run test:upstream` stages the 66 test files from `vendor/claude-seo/tests/`
+`npm run test:upstream` stages the 69 test files from `vendor/claude-seo/tests/`
 at `tests-upstream/` — exactly one level below the repo root — so their
 `Path(__file__).resolve().parents[1]` resolves here and they import the scripts
 this package ships, not the vendored copy. That distinction is not cosmetic:
 run in place, the suite validates upstream against itself and would pass with
 every shipped script deleted.
 
-It needs `pytest`, `requests`, `beautifulsoup4` and `lxml`:
+It needs `pytest` plus the runtime's own packages (`requests`, `beautifulsoup4`,
+`lxml`, `google-auth`, …), so it installs from the same `requirements.txt` CI
+uses:
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install pytest requests beautifulsoup4 lxml google-auth
-npm run test:upstream        # 865 of 985 upstream tests
+python3 -m venv .venv && .venv/bin/pip install pytest -r requirements.txt
+npm run test:upstream        # 878 of 999 upstream tests on Python 3.14, 879 below it
 ```
 
 The harness finds the interpreter via `CLAUDE_SEO_PYTHON`, then `.venv/bin/python`,
-then `python3`.
+then `python3`. An explicit `CLAUDE_SEO_PYTHON` that cannot import pytest fails
+the run (exit 2) instead of falling back to an interpreter nobody chose.
 
 Some upstream tests assert the Claude Code layout this port replaces on purpose.
 They are listed individually in `tools/upstream-tests.mjs` — `file.py::test_name`
@@ -245,18 +276,19 @@ Four upstream findings are open and unfixed here, all verified against v2.4.2:
 - **`url_safety.validate_url()` raises on a malformed IPv6 URL** (`http://[::1`),
   violating its documented `-> bool` contract. Fail-closed, not an SSRF bypass,
   but it crashes 19 call sites with a traceback instead of returning `False`.
-
 - **`test_hostile_inputs.py::test_deeply_nested_well_known_document_is_a_finding`
   fails on Python 3.14.** It feeds `agentic_check.audit_well_known` a 100000-deep
   `[[[…]]]` and expects a `fail` finding, assuming `json.loads` raises
   `RecursionError`. From 3.14 it parses the document, so the check correctly
   reports valid JSON and the test's premise is gone; the script is not broken.
-  CI runs the upstream suite on 3.12 for this reason and runs the runtime job on
-  3.10, 3.12 and 3.14.
+  The harness deselects it on 3.14 and later only (`VERSION_DESELECTED` in
+  `tools/upstream-tests.mjs`) and prints the reason; on older Pythons it runs
+  and must pass. CI runs the upstream suite on 3.12 and the runtime job on 3.10,
+  3.12 and 3.14.
 
-If you need the first one fixed locally, `redact_google_api_key` is already
-importable from `google_auth`; the change is two lines. It is not applied here
-on purpose — see the paragraph above.
+If you need the `youtube_search.py` key leak fixed locally,
+`redact_google_api_key` is already importable from `google_auth`; the change is
+two lines. It is not applied here on purpose — see the paragraph above.
 
 ## Credits
 

@@ -72,7 +72,7 @@ For every generation request:
 2. **Apply SEO defaults** from the use cases table above
 3. **Set aspect ratio** via `set_aspect_ratio` MCP tool
 4. **Construct Reasoning Brief** using the banana Creative Director pipeline:
-   - Use `this skill's directory` as the installed skill root
+   - Use the directory containing this SKILL.md as the installed skill root
    - Load `references/prompt-engineering.md` for the 6-component system
    - Apply domain mode emphasis (Subject 30%, Style 25%, Context 15%, etc.)
    - Be SPECIFIC and VISCERAL: describe what the camera sees

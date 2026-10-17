@@ -19,9 +19,9 @@
  * Run: node tools/upstream-tests.mjs [--verbose]
  */
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
@@ -47,7 +47,7 @@ const staging = join(repoRoot, "tests-upstream");
  * drops `maxTurns`; and it does not publish upstream's own repository files
  * (`docs/`, `CLAUDE.md`, `AGENTS.md`, `pyproject.toml`, `.claude-plugin/`).
  */
-const DESELECTED = [
+export const DESELECTED = [
   // ── No Claude Code extension installers (they wrote ~/.claude.json) ──
   // The port ships no `extensions/<name>/install.sh` at all, so every test that
   // reads one is listed by name. Whole files are excluded only where *every* test
@@ -129,6 +129,23 @@ const DESELECTED = [
   "test_google_api_key_safety.py::test_mcp_docs_do_not_show_google_query_key_examples",
 ];
 
+/**
+ * Tests whose premise a newer Python removed, deselected only on that Python.
+ *
+ * Unlike DESELECTED these are not divergences of the port: the script is fine
+ * and the test still runs, and must pass, on every older interpreter. An
+ * interpreter whose version cannot be read counts as older, so the test runs.
+ */
+export const VERSION_DESELECTED = [
+  {
+    entry: "test_hostile_inputs.py::test_deeply_nested_well_known_document_is_a_finding",
+    minPython: [3, 14],
+    reason:
+      "json.loads parses 100000-deep nesting from Python 3.14 instead of raising " +
+      "RecursionError, so the test's premise is gone; agentic_check correctly reports valid JSON",
+  },
+];
+
 function stage() {
   if (!existsSync(source)) {
     console.error(
@@ -179,13 +196,16 @@ function stage() {
   }
 }
 
-/** Resolve the Python interpreter to run pytest with. */
+/**
+ * Resolve the Python interpreter to run pytest with.
+ *
+ * An explicit CLAUDE_SEO_PYTHON is used or the run fails: falling through to
+ * `.venv` or `python3` would run the suite on an interpreter nobody chose, and
+ * report its result as the one that was asked for.
+ */
 function python() {
-  const candidates = [
-    process.env.CLAUDE_SEO_PYTHON,
-    join(repoRoot, ".venv", "bin", "python"),
-    "python3",
-  ].filter(Boolean);
+  const explicit = process.env.CLAUDE_SEO_PYTHON;
+  const candidates = explicit ? [explicit] : [join(repoRoot, ".venv", "bin", "python"), "python3"];
   for (const candidate of candidates) {
     try {
       execFileSync(candidate, ["-c", "import pytest"], { stdio: "ignore" });
@@ -194,39 +214,47 @@ function python() {
       // try the next one
     }
   }
+  if (explicit) {
+    console.error(
+      `CLAUDE_SEO_PYTHON=${explicit} cannot import pytest. Install it there, or unset ` +
+        "CLAUDE_SEO_PYTHON to fall back to .venv/bin/python, then python3."
+    );
+    process.exit(2);
+  }
   return null;
 }
 
-stage();
-
-const interpreter = python();
-if (!interpreter) {
-  console.error(
-    "No Python with pytest found. The upstream suite is optional; to run it:\n" +
-      "  python3 -m venv .venv && .venv/bin/pip install pytest requests beautifulsoup4 lxml"
-  );
-  process.exit(2);
-}
-
-const args = [
-  "-m",
-  "pytest",
-  "tests-upstream/",
-  "-q",
-  "--no-header",
-  "-p",
-  "no:cacheprovider",
-  "--tb=line",
-];
-for (const entry of DESELECTED) {
-  if (entry.includes("::")) {
-    args.push("--deselect", join("tests-upstream", entry));
-  } else {
-    args.push("--ignore", join("tests-upstream", entry));
+/** `[major, minor]` of an interpreter, or null when it does not say. */
+function pythonVersion(interpreter) {
+  try {
+    const out = execFileSync(
+      interpreter,
+      ["-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+      { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }
+    );
+    const match = /^(\d+)\.(\d+)\s*$/.exec(out);
+    return match ? [Number(match[1]), Number(match[2])] : null;
+  } catch {
+    return null;
   }
 }
-if (process.argv.includes("--verbose")) {
-  args.push("--tb=short", "-v");
+
+/** The VERSION_DESELECTED entries that apply to this interpreter version. */
+export function versionDeselected(version) {
+  if (!version) {
+    return [];
+  }
+  const [major, minor] = version;
+  return VERSION_DESELECTED.filter(
+    ({ minPython: [wantMajor, wantMinor] }) => major > wantMajor || (major === wantMajor && minor >= wantMinor)
+  );
+}
+
+/** pytest flags that drop one entry: a whole file is ignored, a test deselected. */
+function deselectArgs(entry) {
+  return entry.includes("::")
+    ? ["--deselect", join("tests-upstream", entry)]
+    : ["--ignore", join("tests-upstream", entry)];
 }
 
 /**
@@ -241,15 +269,15 @@ function countCollected(output) {
 }
 
 /**
- * How many tests the DESELECTED list actually removes.
+ * How many tests the deselection lists actually remove.
  *
  * Measured by asking pytest to collect twice — once unrestricted, once with the
- * list applied — rather than by counting entries, which is wrong two ways:
+ * lists applied — rather than by counting entries, which is wrong two ways:
  * `--ignore` removes a file without pytest counting it as "deselected" (that
  * counter covers `--deselect` only), and one parametrised entry can remove
  * several tests.
  */
-function deselectedTestCount() {
+function deselectedTestCount(interpreter, entries) {
   const collect = (extra) => {
     try {
       const out = execFileSync(
@@ -268,28 +296,76 @@ function deselectedTestCount() {
   };
 
   const all = collect([]);
-  const kept = collect(
-    DESELECTED.flatMap((entry) =>
-      entry.includes("::")
-        ? ["--deselect", join("tests-upstream", entry)]
-        : ["--ignore", join("tests-upstream", entry)]
-    )
-  );
+  const kept = collect(entries.flatMap(deselectArgs));
   return { removed: all - kept, total: all };
 }
 
-try {
-  execFileSync(interpreter, args, { cwd: repoRoot, stdio: "inherit" });
-  const { removed, total } = deselectedTestCount();
-  console.log(
-    `\n✓ upstream suite passed — ${total - removed}/${total} upstream tests ran; ` +
-      `${removed} were not run, via ${DESELECTED.length} entries (each with a stated reason)`
-  );
-} catch (error) {
-  console.error(
-    "\n✗ the upstream suite failed against this tree. A failure here is usually a\n" +
-      "  real regression in scripts/: the suite exercises the SSRF guard, the\n" +
-      "  schema hook, the fetchers and the cost ledgers against the shipped code."
-  );
-  process.exit(error.status ?? 1);
+function main() {
+  stage();
+
+  const interpreter = python();
+  if (!interpreter) {
+    console.error(
+      "No Python with pytest found. The upstream suite is optional; to run it:\n" +
+        "  python3 -m venv .venv && .venv/bin/pip install pytest -r requirements.txt"
+    );
+    process.exit(2);
+  }
+
+  const byVersion = versionDeselected(pythonVersion(interpreter));
+  for (const { entry, minPython, reason } of byVersion) {
+    console.log(`[upstream-tests] deselected on Python >= ${minPython.join(".")}: ${entry}\n  reason: ${reason}`);
+  }
+  const entries = [...DESELECTED, ...byVersion.map(({ entry }) => entry)];
+
+  const args = [
+    "-m",
+    "pytest",
+    "tests-upstream/",
+    "-q",
+    "--no-header",
+    "-p",
+    "no:cacheprovider",
+    "--tb=line",
+    ...entries.flatMap(deselectArgs),
+  ];
+  if (process.argv.includes("--verbose")) {
+    args.push("--tb=short", "-v");
+  }
+
+  try {
+    execFileSync(interpreter, args, { cwd: repoRoot, stdio: "inherit" });
+    const { removed, total } = deselectedTestCount(interpreter, entries);
+    console.log(
+      `\n✓ upstream suite passed — ${total - removed}/${total} upstream tests ran; ` +
+        `${removed} were not run, via ${entries.length} entries (each with a stated reason)`
+    );
+  } catch (error) {
+    console.error(
+      "\n✗ the upstream suite failed against this tree. A failure here is usually a\n" +
+        "  real regression in scripts/: the suite exercises the SSRF guard, the\n" +
+        "  schema hook, the fetchers and the cost ledgers against the shipped code."
+    );
+    process.exit(error.status ?? 1);
+  }
+}
+
+/**
+ * True when this file is the entry point. import.meta.url is the realpath, so
+ * argv[1] is resolved too: through a symlinked checkout the two differ and the
+ * script would exit 0 having done nothing.
+ */
+function invokedDirectly() {
+  if (!process.argv[1]) {
+    return false;
+  }
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+  } catch {
+    return false;
+  }
+}
+
+if (invokedDirectly()) {
+  main();
 }

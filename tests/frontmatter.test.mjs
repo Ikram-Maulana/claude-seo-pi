@@ -193,3 +193,33 @@ test("malformed YAML is reported rather than silently half-read", () => {
 test("a tab-indented line is rejected", () => {
   assert.throws(() => parseFrontmatter("\tdescription: x"), /tab|parse|yaml/i);
 });
+
+test("parsing stays permissive and keeps the YAML types alongside the strings", () => {
+  // Every SKILL.md carries a `metadata:` mapping that sync, verify and the tree
+  // tests read; rejecting non-scalars here would fail all 33 skills.
+  const { values, raw } = parseFrontmatter(
+    ["name: seo", "advertise: true", 'color: "true"', "metadata:", "  version: 2.4.2"].join("\n")
+  );
+  assert.equal(values.advertise, "true");
+  assert.equal(raw.advertise, true);
+  assert.equal(raw.color, "true");
+  assert.deepEqual(raw.metadata, { version: "2.4.2" });
+  assert.deepEqual(parseFrontmatter("").raw, {});
+});
+
+test("an exact value is quoted when a bare one would change its type", () => {
+  const line = (value) => renderFrontmatter([["key", value, { exact: true }]]).split("\n")[1];
+  assert.equal(line("true"), 'key: "true"', "a string must not become a boolean");
+  assert.equal(line("42"), 'key: "42"', "a string must not become a number");
+  assert.equal(line("null"), 'key: "null"');
+  assert.equal(line(true), "key: true");
+  assert.equal(line(42), "key: 42");
+  assert.equal(line(null), "key: null");
+  assert.equal(line("plain words"), "key: plain words");
+});
+
+test("the build's own flags still render as bare booleans", () => {
+  // pi-subagents reads `advertise: "true"` as a string, not as true.
+  assert.equal(renderFrontmatter([["advertise", "true"]]).split("\n")[1], "advertise: true");
+  assert.equal(renderFrontmatter([["inheritSkills", "false"]]).split("\n")[1], "inheritSkills: false");
+});

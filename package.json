@@ -1,6 +1,6 @@
 {
   "name": "claude-seo-pi",
-  "version": "2.4.2",
+  "version": "2.4.2-pi.0",
   "type": "module",
   "description": "Comprehensive SEO analysis for the pi and omp coding agents. 33 skills, 20 specialist agents and 50+ Python tools covering technical SEO, content quality (E-E-A-T), schema markup, GEO/AI search, local SEO, backlinks, rank tracking and drift monitoring. Ported from claude-seo.",
   "keywords": [

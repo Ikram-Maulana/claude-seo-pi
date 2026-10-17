@@ -11,6 +11,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BLOCK_SCALAR, descriptionOf, frontmatterOf, parseFrontmatter } from "../tools/frontmatter.mjs";
+import { DESELECTED, VERSION_DESELECTED } from "../tools/upstream-tests.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const agentsDir = join(repoRoot, "agents");
@@ -284,26 +285,29 @@ test("every deselected upstream test carries a stated reason", () => {
   const list = /const DESELECTED = \[([\s\S]*?)\n\];/.exec(harness);
   assert.ok(list, "DESELECTED is gone");
 
-  const lines = list[1].split("\n");
-  const orphans = [];
   // A reason block opens with the ── marker and covers every entry until the
-  // next marker; an entry is an orphan only if no marker precedes it at all.
-  let covered = false;
-  for (const line of lines) {
+  // next marker. An entry before any marker is an orphan; a marker with no
+  // entry under it means the list was edited and a rule was left behind.
+  const blocks = [];
+  const orphans = [];
+  for (const line of list[1].split("\n")) {
     if (/^\s*\/\/\s*──/.test(line)) {
-      covered = true;
-      continue;
-    }
-    if (/^\s*"[^"]+",?\s*$/.test(line) && !covered) {
-      orphans.push(line.trim());
+      blocks.push({ reason: line.trim(), entries: 0 });
+    } else if (/^\s*"[^"]+",?\s*$/.test(line)) {
+      if (blocks.length === 0) {
+        orphans.push(line.trim());
+      } else {
+        blocks.at(-1).entries += 1;
+      }
     }
   }
   assert.deepEqual(orphans, [], "these deselect entries have no stated reason above them");
-
-  // The other direction matters too: a reason block with no entries under it
-  // means the list was edited and a rule was left behind.
-  const reasons = lines.filter((l) => /^\s*\/\/\s*──/.test(l)).length;
-  assert.ok(reasons > 0, "no reason blocks at all — the list lost its rationale");
+  assert.ok(blocks.length > 0, "no reason blocks at all — the list lost its rationale");
+  assert.deepEqual(
+    blocks.filter((block) => block.entries === 0).map((block) => block.reason),
+    [],
+    "these reason blocks have no entry under them"
+  );
 
   const count = (list[1].match(/^\s*"/gm) ?? []).length;
   assert.ok(count > 0, "the deselection list is empty — did the suite start passing?");
@@ -322,6 +326,21 @@ test("every deselected upstream test carries a stated reason", () => {
       `test inside it, including tests that pass — prefer "file.py::test_name" entries:\n  ` +
       wholeFiles.join("\n  ")
   );
+});
+
+test("every version-conditional deselection names one test, a Python and a reason", () => {
+  // These run, and must pass, on every older Python, so an entry is narrower
+  // than a DESELECTED one: one test id, never a file, never both lists.
+  assert.ok(Array.isArray(VERSION_DESELECTED));
+  for (const { entry, minPython, reason } of VERSION_DESELECTED) {
+    assert.match(entry, /^test_[\w]+\.py::test_\w+$/, `${entry} must be file.py::test_name`);
+    assert.ok(
+      Array.isArray(minPython) && minPython.length === 2 && minPython.every(Number.isInteger),
+      `${entry}: minPython must be [major, minor]`
+    );
+    assert.ok(typeof reason === "string" && reason.trim().length >= 20, `${entry} has no stated reason`);
+    assert.ok(!DESELECTED.includes(entry), `${entry} is in both lists`);
+  }
 });
 
 test("no test file declares the same test twice", () => {

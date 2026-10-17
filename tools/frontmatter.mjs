@@ -43,16 +43,19 @@ function toStringValue(value) {
 }
 
 /**
- * Parse frontmatter into `{ values, order }`.
+ * Parse frontmatter into `{ values, order, raw }`.
  *
- * `order` preserves the source key order so the renderer keeps a file's
- * existing layout. Throws on malformed YAML: the build rewrites what it reads,
- * so a block the parser cannot read is one whose values would be guessed at.
+ * `values` holds every key as a string, so it stays permissive: skills carry a
+ * `metadata:` mapping the build only reads. `raw` keeps the parsed YAML types
+ * for a caller that writes values back out and must not change them. `order`
+ * preserves the source key order so the renderer keeps a file's existing
+ * layout. Throws on malformed YAML: the build rewrites what it reads, so a
+ * block the parser cannot read is one whose values would be guessed at.
  */
 export function parseFrontmatter(raw) {
   const trimmed = raw.trim();
   if (trimmed === "") {
-    return { values: {}, order: [] };
+    return { values: {}, order: [], raw: {} };
   }
 
   let parsed;
@@ -63,7 +66,7 @@ export function parseFrontmatter(raw) {
   }
 
   if (parsed === null || parsed === undefined) {
-    return { values: {}, order: [] };
+    return { values: {}, order: [], raw: {} };
   }
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error(`frontmatter must be a mapping, got ${Array.isArray(parsed) ? "a list" : typeof parsed}`);
@@ -75,7 +78,16 @@ export function parseFrontmatter(raw) {
     order.push(key);
     values[key] = toStringValue(value);
   }
-  return { values, order };
+  return { values, order, raw: parsed };
+}
+
+/** True when `text`, written bare, reads back as exactly `value`. */
+function readsBackAs(text, value) {
+  try {
+    return Object.is(parseYaml(text), value);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -84,10 +96,22 @@ export function parseFrontmatter(raw) {
  * JSON's string syntax is a subset of YAML's double-quoted scalars, so
  * JSON.stringify is a safe quoter; plain values stay unquoted to keep the
  * generated files readable and diffable.
+ *
+ * With `exact`, the value is a parsed YAML scalar that must keep its type: a
+ * boolean, number or null renders bare, and a string that would read back as
+ * one of those (`"true"`, `"42"`, `"null"`) is quoted. Without it, the build's
+ * own string flags (`advertise: true`) render bare, as pi-subagents expects.
  */
-function yamlValue(value) {
+function yamlValue(value, exact = false) {
+  if (exact && (value === null || typeof value === "boolean" || typeof value === "number")) {
+    const bare = String(value);
+    if (readsBackAs(bare, value)) {
+      return bare;
+    }
+  }
   const text = String(value ?? "");
   const needsQuotes =
+    (exact && !readsBackAs(text, text)) ||
     text === "" ||
     /:\s/.test(text) ||
     /\s#/.test(text) ||
@@ -98,8 +122,9 @@ function yamlValue(value) {
   return needsQuotes ? JSON.stringify(text) : text;
 }
 
+/** Render `[key, value]` or `[key, value, { exact: true }]` pairs, one per line. */
 export function renderFrontmatter(pairs) {
-  return ["---", ...pairs.map(([k, v]) => `${k}: ${yamlValue(v)}`), "---", ""].join("\n");
+  return ["---", ...pairs.map(([k, v, options]) => `${k}: ${yamlValue(v, options?.exact)}`), "---", ""].join("\n");
 }
 
 /** Raw frontmatter block of a file, or "" when the file has none. */

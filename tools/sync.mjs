@@ -15,11 +15,13 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseFrontmatter, renderFrontmatter, splitFrontmatter } from "./frontmatter.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -88,9 +90,10 @@ const AGENT_DEFAULTS = {
  *
  * pi-subagents caps the advertisement at 16 entries and picks them in sorted
  * order, so advertising all 20 would silently drop the four that sort last —
- * including seo-technical and seo-visual, which the audit orchestrator spawns
- * unconditionally. These four are always reached through their own skill, so
- * the catalog entry buys nothing. They stay dispatchable by name.
+ * seo-sitemap, seo-sxo, seo-technical and seo-visual, all four of which
+ * skills/seo-audit/SKILL.md spawns unconditionally. The four below are always
+ * reached through their own skill instead, so the catalog entry buys nothing.
+ * They stay dispatchable by name.
  */
 const NOT_ADVERTISED = new Set(["seo-drift", "seo-flow", "seo-image-gen", "seo-matomo"]);
 
@@ -262,12 +265,12 @@ function mapTool(name, file) {
 }
 
 /** Convert one claude-seo agent definition into a pi-subagents definition. */
-function convertAgent(source, file) {
+export function convertAgent(source, file) {
   const { frontmatter, body } = splitFrontmatter(source);
   if (!frontmatter) {
     throw new Error(`${file}: no frontmatter found`);
   }
-  const { values, order } = parseFrontmatter(frontmatter);
+  const { values, order, raw } = parseFrontmatter(frontmatter);
   const name = values.name ?? file.replace(/\.md$/, "");
 
   const pairs = [
@@ -306,11 +309,23 @@ function convertAgent(source, file) {
   pairs.push(["inheritProjectContext", String(AGENT_DEFAULTS.inheritProjectContext)]);
   pairs.push(["inheritSkills", String(AGENT_DEFAULTS.inheritSkills)]);
 
-  // Carry through anything we do not manage, so upstream additions survive a sync.
+  // Carry through anything we do not manage, so upstream additions survive a
+  // sync. The renderer writes one scalar per line, so a list or mapping would be
+  // flattened into a string the host reads differently: fail instead. A scalar
+  // keeps its YAML type, so an upstream string "true" is not emitted as a bare
+  // boolean (the managed flags above are meant to render bare).
   for (const key of order) {
-    if (!CONSUMED_KEYS.has(key.toLowerCase())) {
-      pairs.push([key, values[key]]);
+    if (CONSUMED_KEYS.has(key.toLowerCase())) {
+      continue;
     }
+    const value = raw[key];
+    if (value !== null && typeof value === "object") {
+      throw new Error(
+        `${file}: frontmatter key "${key}" is a ${Array.isArray(value) ? "list" : "mapping"}; ` +
+          "the agent renderer writes scalars only and would flatten it — map it in convertAgent"
+      );
+    }
+    pairs.push([key, value, { exact: true }]);
   }
 
   return renderFrontmatter(pairs) + body;
@@ -337,6 +352,8 @@ function rewritePlaceholders(text) {
       // Joined form first, so a bare `Use ${CLAUDE_SKILL_DIR}` line does not
       // consume the leading slash of a path reference.
       .replaceAll("${CLAUDE_SKILL_DIR}/", "")
+      // In backticks it reads as a literal path to type; say what it means.
+      .replaceAll("`${CLAUDE_SKILL_DIR}`", "the directory containing this SKILL.md")
       .replaceAll("${CLAUDE_SKILL_DIR}", "this skill's directory")
       .replaceAll("${CLAUDE_PLUGIN_ROOT}", "$SEO_PLUGIN_ROOT")
       // Collapse the Unix/Windows installer pair before the generic rewrites
@@ -380,6 +397,10 @@ function rewriteTree(dir) {
  * Install a skill. When the same name arrives twice, merge rather than replace:
  * take the incoming (extension) SKILL.md but keep any references/ files the
  * incoming copy lacks, so instructions never point at missing files.
+ *
+ * The merge happens in skills/, never in `srcDir`: that is the vendored tree,
+ * and writing the kept references into it made a second sync see a different
+ * upstream than the archive holds.
  */
 function installSkill(srcDir, label) {
   const name = srcDir.split("/").pop();
@@ -387,19 +408,25 @@ function installSkill(srcDir, label) {
   const existing = existsSync(dest);
 
   if (existing && SKILL_MERGES.has(name)) {
-    const incomingRefs = join(srcDir, "references");
-    const keptRefs = join(dest, "references");
-    if (existsSync(keptRefs)) {
-      mkdirSync(incomingRefs, { recursive: true });
-      for (const entry of readdirSync(keptRefs)) {
-        const target = join(incomingRefs, entry);
-        if (!existsSync(target)) {
-          cpSync(join(keptRefs, entry), target);
+    const base = `${dest}.merge-base`;
+    rmSync(base, { recursive: true, force: true });
+    renameSync(dest, base);
+    try {
+      cpSync(srcDir, dest, { recursive: true });
+      const keptRefs = join(base, "references");
+      if (existsSync(keptRefs)) {
+        const mergedRefs = join(dest, "references");
+        mkdirSync(mergedRefs, { recursive: true });
+        for (const entry of readdirSync(keptRefs)) {
+          const target = join(mergedRefs, entry);
+          if (!existsSync(target)) {
+            cpSync(join(keptRefs, entry), target, { recursive: true });
+          }
         }
       }
+    } finally {
+      rmSync(base, { recursive: true, force: true });
     }
-    rmSync(dest, { recursive: true, force: true });
-    cpSync(srcDir, dest, { recursive: true });
     report.mergedSkills.push(name);
     report.installedSkills.push(`${name} (${label}, merged)`);
   } else if (existing) {
@@ -412,8 +439,8 @@ function installSkill(srcDir, label) {
     report.installedSkills.push(`${name} (${label})`);
   }
 
-  // A skill refers to its own files through $SEO_SKILL_DIR, which each runtime
-  // resolves to the directory holding this SKILL.md.
+  // A skill refers to its own files by paths relative to its SKILL.md, which
+  // each runtime resolves against the directory holding it.
   rewriteTree(dest);
   report.finalSkills.add(name);
 }
@@ -426,6 +453,31 @@ function installAgent(srcFile, label) {
   }
   const converted = rewritePlaceholders(convertAgent(readFileSync(srcFile, "utf-8"), name));
   writeFileSync(dest, rewriteAgentBody(converted, name), "utf-8");
+}
+
+/**
+ * The package version for an upstream release: `<upstream>-pi.N`.
+ *
+ * Every release carries a port revision, so a fix to the port alone can ship as
+ * `-pi.1` without waiting for upstream. The revision is the maintainer's: a
+ * current version on the same upstream release is kept, and anything else (a
+ * new upstream, a plain `2.4.2`, another prerelease shape) starts at `-pi.0`.
+ * semver orders these the way `pi update` needs: 2.4.0 < 2.4.2-pi.0 <
+ * 2.4.2-pi.1 < 2.4.3-pi.0.
+ *
+ * Upstream must be a plain release: a prerelease of its own would put two
+ * prerelease tags in one version, and the port would order before upstream's
+ * final release of the same number.
+ */
+export function portVersion(upstreamVersion, current) {
+  if (typeof upstreamVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(upstreamVersion)) {
+    throw new Error(
+      `upstream plugin.json has no usable release version (got ${JSON.stringify(upstreamVersion)}); ` +
+        "expected MAJOR.MINOR.PATCH"
+    );
+  }
+  const revision = /^(\d+\.\d+\.\d+)-pi\.(0|[1-9]\d*)$/.exec(String(current ?? ""));
+  return revision && revision[1] === upstreamVersion ? current : `${upstreamVersion}-pi.0`;
 }
 
 /** Refuse to wipe anything holding tracked source rather than generated output. */
@@ -557,28 +609,39 @@ function main() {
     throw new Error("hooks/validate-schema.py is missing from the vendored tree");
   }
 
-  // 8. runtime.py reads the version from .claude-plugin/plugin.json or
-  //    runtime-plugin.json; we strip the former, so ship the latter.
+  // 8. The version: `<upstream>-pi.N` (see portVersion). runtime.py reads it
+  //    from .claude-plugin/plugin.json or runtime-plugin.json; we strip the
+  //    former, so ship the latter. runtime.py only reports it.
   const upstreamPlugin = join(upstream, ".claude-plugin", "plugin.json");
   if (!existsSync(upstreamPlugin)) {
     throw new Error(".claude-plugin/plugin.json is missing from the vendored tree: cannot derive the version");
   }
-  const version = JSON.parse(readFileSync(upstreamPlugin, "utf-8")).version;
-  if (typeof version !== "string" || !/^\d+\.\d+\.\d+/.test(version)) {
-    throw new Error(`upstream plugin.json has no usable version (got ${JSON.stringify(version)})`);
-  }
+  const pkgPath = join(repoRoot, "package.json");
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+  const version = portVersion(JSON.parse(readFileSync(upstreamPlugin, "utf-8")).version, pkg.version);
   writeFileSync(
     join(repoRoot, "runtime-plugin.json"),
     `${JSON.stringify({ name: "claude-seo-pi", version }, null, 2)}\n`,
     "utf-8"
   );
 
-  // 9. Keep package.json's version in step with upstream.
-  const pkgPath = join(repoRoot, "package.json");
-  const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+  // 9. Keep package.json and its lockfile on that version. npm tolerates a stale
+  //    root version in the lockfile (it once said 2.4.0 against 2.4.2), but the
+  //    release commit should not carry one.
   if (pkg.version !== version) {
     pkg.version = version;
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf-8");
+  }
+  const lockPath = join(repoRoot, "package-lock.json");
+  if (existsSync(lockPath)) {
+    const lock = JSON.parse(readFileSync(lockPath, "utf-8"));
+    if (lock.version !== version || (lock.packages?.[""] && lock.packages[""].version !== version)) {
+      lock.version = version;
+      if (lock.packages?.[""]) {
+        lock.packages[""].version = version;
+      }
+      writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, "utf-8");
+    }
   }
 
   // 10. Fail loudly if a placeholder survived in a file the model reads.
@@ -687,4 +750,22 @@ function main() {
   }
 }
 
-main();
+/**
+ * True when this file is the entry point. import.meta.url is the realpath, so
+ * argv[1] is resolved too: through a symlinked checkout the two differ and the
+ * script would exit 0 having done nothing.
+ */
+function invokedDirectly() {
+  if (!process.argv[1]) {
+    return false;
+  }
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+  } catch {
+    return false;
+  }
+}
+
+if (invokedDirectly()) {
+  main();
+}

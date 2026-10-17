@@ -17,7 +17,7 @@
  * Run: node tools/scan-secrets.mjs
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -48,14 +48,20 @@ export const PATTERNS = [
     // The key may be quoted (JSON, quoted YAML) and may carry a prefix or
     // suffix (`MOZ_SECRET_KEY`, `api_key_prod`); the value is a quoted literal.
     "assigned literal secret",
-    /(?:api[_-]?key|apikey|client[_-]?secret|secret|password|token)[A-Za-z0-9_]*["']?\s*[:=]\s*["'][A-Za-z0-9_\-]{20,}["']/gi,
+    /(?:api[_-]?key|apikey|client[_-]?secret|secret|password|token)[A-Za-z0-9_]*["']?\s*[:=]\s*["'](?<value>[A-Za-z0-9_\-]{20,})["']/gi,
   ],
   [
     // An unquoted `.env` / shell assignment. Restricted to SHOUTING_CASE names
     // whose value holds a digit, so `token = some_long_identifier` in code does
-    // not trip it.
+    // not trip it. The prefix is optional: a bare `API_KEY=` or `TOKEN=` counts.
     "unquoted env secret",
-    /^[ \t]*(?:export[ \t]+)?[A-Z][A-Z0-9_]*(?:API_KEY|SECRET|PASSWORD|TOKEN)[A-Z0-9_]*=(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{20,}[ \t]*$/gm,
+    /^[ \t]*(?:export[ \t]+)?(?:[A-Z][A-Z0-9_]*)?(?:API_KEY|SECRET|PASSWORD|TOKEN)[A-Z0-9_]*=(?<value>(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{20,})[ \t]*$/gm,
+  ],
+  [
+    // The same shape as a YAML mapping entry (`DATAFORSEO_PASSWORD: s3cr…`),
+    // which the quoted-literal rule above misses because the value is bare.
+    "unquoted YAML secret",
+    /^[ \t]*(?:-[ \t]+)?(?:[A-Z][A-Z0-9_]*)?(?:API_KEY|SECRET|PASSWORD|TOKEN)[A-Z0-9_]*:[ \t]+(?<value>(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{20,})[ \t]*(?:#.*)?$/gm,
   ],
 ];
 
@@ -63,8 +69,10 @@ export const PATTERNS = [
  * Values that look like a secret but are documentation.
  *
  * Upstream ships `opr_live_xxxxxxxxxxxxxxxx` in a setup example; flagging that
- * would make the scan useless, so a match is discarded when it contains a run
- * of placeholder characters or a placeholder word.
+ * would make the scan useless, so a match is discarded when its *value* contains
+ * a run of placeholder characters or a placeholder word. Only the value: tested
+ * against the whole match, a key named `TEST_KEY`, `YOUR_TOKEN` or
+ * `EXAMPLE_SECRET` waved a real credential through.
  */
 const PLACEHOLDER = /x{6,}|X{6,}|0{6,}|<[a-z_-]+>|\$\{|your[_-]?|example|placeholder|changeme|redacted|canary|dummy|fake|test[_-]?key|abc123|abcdef0123456789|must-not-leak/i;
 
@@ -89,7 +97,7 @@ export function scanText(text) {
   for (const [label, pattern] of PATTERNS) {
     pattern.lastIndex = 0;
     for (const match of text.matchAll(pattern)) {
-      if (PLACEHOLDER.test(match[0])) {
+      if (PLACEHOLDER.test(match.groups?.value ?? match[0])) {
         continue;
       }
       hits.push({ label, sample: match[0].slice(0, 12) + "…" });
@@ -148,6 +156,22 @@ function main() {
   console.log(`✓ no credential-shaped strings in ${scanned} files`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+/**
+ * True when this file is the entry point. import.meta.url is the realpath, so
+ * argv[1] is resolved too: through a symlinked checkout the two differ and the
+ * script would exit 0 having done nothing.
+ */
+function invokedDirectly() {
+  if (!process.argv[1]) {
+    return false;
+  }
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+  } catch {
+    return false;
+  }
+}
+
+if (invokedDirectly()) {
   main();
 }

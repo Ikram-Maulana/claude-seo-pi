@@ -296,9 +296,9 @@ pi remove npm:claude-seo-pi
 omp plugin uninstall claude-seo-pi
 ```
 
-The managed Python environment in `~/.local/share/claude-seo` is not removed, so
-delete it manually to reclaim the disk. Credentials under `~/.config/claude-seo/`
-are likewise left alone.
+The managed Python environment is not removed: delete the per-user data directory
+listed under [Install](#install) (or your `CLAUDE_SEO_DATA_DIR`) to reclaim the
+disk. Credentials under `~/.config/claude-seo/` are likewise left alone.
 
 ## Contributing
 

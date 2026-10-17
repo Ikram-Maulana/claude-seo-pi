@@ -14,27 +14,52 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { scanText } from "../tools/scan-secrets.mjs";
+import { PATTERNS, scanText } from "../tools/scan-secrets.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const scanner = join(repoRoot, "tools", "scan-secrets.mjs");
 
 const MIXED = "Zk3pQ9vLm2Xw8TnB4yRc7HdJ5sGf1aEuV6bN0qWz";
+const HEX = "9f8e7d6c5b4a39281706f5e4d3c2b1a0";
+
+/** One real-shaped sample per PATTERNS label, in the context the label names. */
 const fixtures = {
   "Google API key": `AI${"za"}${MIXED.slice(0, 35)}`,
+  "Google OAuth client secret": `GOC${"SPX"}-${MIXED.slice(0, 28)}`,
   "AWS access key id": `AK${"IA"}Q3Z7K9M2P5X8R4TW`,
   "GitHub token": `gh${"p_"}${MIXED}${"AbCd"}`,
-  "npm token": `npm${"_"}${MIXED}${"AbCd"}`,
+  "GitHub fine-grained PAT": `github${"_pat_"}${MIXED}${MIXED}Ab`,
+  "Slack token": `xo${"xb"}-1234567890-${MIXED.slice(0, 12)}`,
+  "Stripe secret": `sk${"_live_"}${MIXED.slice(0, 24)}`,
+  "OpenAI key": `sk-${"proj"}-${MIXED}`,
+  "Anthropic key": `sk-${"ant"}-${MIXED.repeat(3)}`,
   "Private key block": `-----BEGIN RSA PRIVATE ${"KEY"}-----`,
+  "Firecrawl key": `fc${"-"}${HEX}`,
+  "npm token": `npm${"_"}${MIXED}${"AbCd"}`,
+  "JSON Web Token": `ey${"J"}hbGciOiJIUzI1NiJ9.ey${"J"}zdWIiOiIxMjM0NTY3ODkwIn0.${MIXED.slice(0, 20)}`,
+  "assigned literal secret": `password = "${MIXED}"`,
+  "unquoted env secret": `DATAFORSEO_PASSWORD=${MIXED}\n`,
+  "unquoted YAML secret": `DATAFORSEO_PASSWORD: ${MIXED}\n`,
 };
 
 function labels(text) {
   return scanText(text).map((hit) => hit.label);
 }
 
+test("every scanner pattern has a sample that proves it still detects", () => {
+  // A pattern without a sample can be broken by a regex edit and nobody would
+  // know; a sample without a pattern is a label that was renamed or removed.
+  assert.deepEqual(
+    PATTERNS.map(([label]) => label).sort(),
+    Object.keys(fixtures).sort(),
+    "PATTERNS and the fixtures in this file must name the same labels"
+  );
+});
+
 for (const [label, secret] of Object.entries(fixtures)) {
   test(`scanner detects a ${label}`, () => {
-    assert.ok(labels(`value ${secret} end`).includes(label), `${label} not detected`);
+    const text = secret.endsWith("\n") ? secret : `value ${secret} end`;
+    assert.ok(labels(text).includes(label), `${label} not detected`);
   });
 }
 
@@ -50,6 +75,34 @@ test("scanner detects prefixed and suffixed key names", () => {
 test("scanner detects an unquoted .env assignment", () => {
   assert.deepEqual(labels(`DATAFORSEO_PASSWORD=${MIXED}\n`), ["unquoted env secret"]);
   assert.deepEqual(labels(`export MOZ_SECRET_KEY=${MIXED}\n`), ["unquoted env secret"]);
+});
+
+test("a placeholder word in the key name does not excuse a real value", () => {
+  // The placeholder filter once ran on the whole match, key included, so a
+  // real credential under `API_KEY_EXAMPLE`, `token_fake` or `EXAMPLE_SECRET`
+  // passed.
+  assert.deepEqual(labels(`API_KEY_EXAMPLE = "${MIXED}"`), ["assigned literal secret"]);
+  assert.deepEqual(labels(`{"token_fake": "${MIXED}"}`), ["assigned literal secret"]);
+  assert.deepEqual(labels(`EXAMPLE_SECRET=${MIXED}\n`), ["unquoted env secret"]);
+  assert.deepEqual(labels(`DUMMY_PASSWORD: ${MIXED}\n`), ["unquoted YAML secret"]);
+});
+
+test("a bare key name with no prefix is still a key name", () => {
+  // `[A-Z][A-Z0-9_]*API_KEY` needed at least one character before the suffix,
+  // so the commonest .env line of all, `API_KEY=…`, was never matched.
+  for (const name of ["API_KEY", "TOKEN", "SECRET", "PASSWORD"]) {
+    assert.deepEqual(labels(`${name}=${MIXED}\n`), ["unquoted env secret"], `${name}= was missed`);
+    assert.deepEqual(labels(`${name}: ${MIXED}\n`), ["unquoted YAML secret"], `${name}: was missed`);
+  }
+});
+
+test("an unquoted YAML value is scanned like an env assignment", () => {
+  assert.deepEqual(labels(`env:\n  MOZ_SECRET_KEY: ${MIXED}\n`), ["unquoted YAML secret"]);
+  assert.deepEqual(labels(`- SERANKING_API_KEY: ${MIXED}  # prod\n`), ["unquoted YAML secret"]);
+  // The same restrictions as the env form: SHOUTING_CASE, and a digit in the value.
+  assert.deepEqual(labels("api_key: some_long_identifier_name_here\n"), []);
+  assert.deepEqual(labels("DATAFORSEO_PASSWORD: ${{ secrets.DATAFORSEO_PASSWORD }}\n"), []);
+  assert.deepEqual(labels("API_KEY: your_api_key_here_1234567\n"), []);
 });
 
 test("scanner leaves placeholders and ordinary code alone", () => {

@@ -12,7 +12,7 @@ Instructions for coding agents in this repository; user docs are in [README.md](
 - Never commit a credential: `npm run secrets` gates CI, but by then the value is already in git history.
 - Never add a runtime dependency: the package ships none, and `tools/` is not published.
 - Never widen a subagent's `tools` allowlist to fix a symptom: pi-subagents treats it as strict, so omitting the key grants every builtin tool. The sync fails rather than emit that. omp is looser (it adds every connected MCP tool to each subagent), so the list is no sandbox there (CONTRIBUTING.md).
-- Never create or push a `v*` tag without the maintainer's explicit say-so: it triggers `release.yml`, which publishes to npm after approval in the `npm-release` environment and cannot be undone. The tag must equal the `package.json` version, which the sync inherits from upstream.
+- Never create or push a `v*` tag without the maintainer's explicit say-so: it triggers `release.yml`, which publishes to npm after approval in the `npm-release` environment and cannot be undone. The tag is `v` plus the `package.json` version, `<upstream>-pi.N`: the sync takes the upstream part from the vendored tag and keeps the port revision N (CONTRIBUTING.md, "Releases").
 - Never push to `main`; it takes merges from `development` only. Maintainers commit straight to `development`; contributors fork, branch from `development` and open the PR against it (CONTRIBUTING.md, "Sending a change"). Do not assume you are a maintainer: you may be in a fork or a topic branch.
 - Commit subjects use conventional prefixes: `feat:`, `fix:`, `chore:`, `docs:`.
 - Ask before bumping `vendor/lock.json`: it re-vendors the whole upstream tree.
@@ -34,7 +34,7 @@ Instructions for coding agents in this repository; user docs are in [README.md](
 - `npm run build` runs vendor, sync, verify, then `npm test`. `npm run check` runs verify, secrets and tests.
 - After changing `tools/`, `src/extensions/` or `vendor/lock.json`, run `npm run build` and commit the regenerated trees in the same change: CI fails on any diff between the committed trees and the sync output.
 - CI typechecks `src/extensions/*.ts` with `tsc`; `npm run check` does not, so a type error appears only after pushing. Extensions import the host package with `import type` only (`verify`).
-- Upstream suite, run against the shipped scripts: `python3 -m venv .venv && .venv/bin/pip install pytest requests beautifulsoup4 lxml google-auth`, then `npm run test:upstream`.
+- Upstream suite, run against the shipped scripts: `python3 -m venv .venv && .venv/bin/pip install pytest -r requirements.txt`, then `npm run test:upstream`.
 
 ## Conventions that differ from defaults
 

@@ -15,15 +15,25 @@ on:
 permissions:
   contents: read
 
+# One run per tag, and never cancelled. The group is per ref because GitHub
+# keeps only one *pending* run per group and cancels the older one even with
+# cancel-in-progress: false, so a shared group would let a third tag pushed
+# close behind cancel the middle tag's release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   # Everything cheap, in the order that fails fastest. A mistagged release dies
   # on the version check before the suite below spends a runner on it.
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # The Active LTS. Node 24 bundles npm 11.x, which clears the floor for
           # trusted publishing (npm >= 11.5.1, Node >= 22.14.0).
@@ -41,10 +51,11 @@ jobs:
           node tools/vendor.mjs
           node tools/sync.mjs
 
-      # sync.mjs derives the version from upstream's plugin.json, so the version
-      # is not chosen here — it is inherited. A tag that disagrees would publish
-      # a version nobody tagged, or fail as a duplicate after the tag is already
-      # public and immutable.
+      # The version is `<upstream>-pi.N`: sync.mjs takes the upstream part from
+      # the vendored plugin.json and keeps the port revision N a maintainer set
+      # with `npm version prerelease --preid pi`. A tag that disagrees would
+      # publish a version nobody tagged, or fail as a duplicate after the tag is
+      # already public and immutable.
       - name: Assert the tag matches package.json
         run: |
           tag="${GITHUB_REF#refs/tags/v}"
@@ -85,25 +96,28 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
       - name: Install build dependencies
         run: npm ci
 
-      # The suite imports requests, bs4 and lxml directly, and pins the same
-      # versions the managed runtime uses.
+      # The suite imports the runtime's own packages (requests, bs4, lxml,
+      # google-auth, ...), so it installs them from the same requirements.txt
+      # the managed runtime uses, at the same version bounds.
       - name: Install Python test dependencies
         run: |
           python3 -m pip install --quiet --disable-pip-version-check \
-            pytest requests beautifulsoup4 lxml google-auth
+            pytest -r requirements.txt
 
       - name: Vendor and sync
         run: |
@@ -129,9 +143,11 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -157,5 +173,9 @@ jobs:
       # supply-chain property fails loudly rather than regressing silently. It is
       # deliberately absent from publishConfig, which would force provenance on
       # every local publish too and break the one-time bootstrap release.
+      #
+      # `--tag latest` is required: every version is a `-pi.N` prerelease, and
+      # npm 11 refuses to publish a prerelease without an explicit dist-tag.
+      # Without `latest`, a plain install would never see it.
       - name: Publish
-        run: npm publish --provenance
+        run: npm publish --provenance --tag latest

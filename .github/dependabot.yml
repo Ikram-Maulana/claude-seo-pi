@@ -1,0 +1,11 @@
+# Keeps the SHA-pinned actions current. Every `uses:` names a commit with its
+# release in a `# vX.Y.Z` comment (tools/verify.mjs enforces that form), and
+# Dependabot updates both together. Pull requests target `development`, which is
+# where every change lands; `main` only takes merges from it.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    target-branch: development
