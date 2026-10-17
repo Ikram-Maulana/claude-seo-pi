@@ -27,3 +27,7 @@ __pycache__/
 
 *.log
 .DS_Store
+
+# BMad workspace: local install state and generated planning output
+/_bmad/
+/_bmad-output/
