@@ -1,95 +1,46 @@
-# AGENTS.md
+<!-- bmad:context -->
+<!-- Verified 2026-10-17 against fa155c8. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
 
-Instructions for coding agents working **in this repository**. This is not user
-documentation — see [README.md](README.md) for that. For *why* the rules below
-exist, see [CONTRIBUTING.md](CONTRIBUTING.md); this file is the short version.
+## claude-seo-pi
 
-## What this repository is
+Instructions for coding agents in this repository; user docs are in [README.md](README.md), the reasons behind these rules in [CONTRIBUTING.md](CONTRIBUTING.md). A port, not a fork, of the Claude Code plugin [claude-seo](https://github.com/AgriciDaniel/claude-seo): upstream is vendored at a pinned tag under `vendor/` and transformed at build time into the trees this package ships for the pi and omp agents. Node >=22 (ESM), TypeScript extensions, Python scripts shipped verbatim from upstream, one build-only devDependency (`yaml`).
 
-A **port**, not a fork. The upstream Claude Code plugin
-[claude-seo](https://github.com/AgriciDaniel/claude-seo) is vendored at a pinned
-tag under `vendor/` and transformed at build time into the trees this package
-ships. This repository adds only the pi/omp adaptation layer.
+## Policy
 
-Two consequences drive nearly every rule below:
+- Never edit the generated trees: `skills/`, `agents/`, `scripts/`, `extensions/`, `schema/`, `data/`, `requirements.txt`, `runtime-plugin.json`. `tools/sync.mjs` discards the edit on the next sync. Change `tools/sync.mjs`, `src/extensions/` or the upstream source instead.
+- Never patch `scripts/*.py`, even for a two-line fix: it is byte-identical to upstream (`tests/tree.test.mjs`, `verify`), so a local fix is a divergence carried on every bump. Report it upstream; the open findings this port deliberately leaves unpatched are listed in CONTRIBUTING.md.
+- Never commit a credential: `npm run secrets` gates CI, but by then the value is already in git history.
+- Never add a runtime dependency: the package ships none, and `tools/` is not published.
+- Never widen a subagent's `tools` allowlist to fix a symptom: pi-subagents treats it as strict, so omitting the key grants every builtin tool. The sync fails rather than emit that.
+- Never create or push a `v*` tag without the maintainer's explicit say-so: it triggers `release.yml`, publishes to npm and cannot be undone. The tag must equal the `package.json` version, which the sync inherits from upstream.
+- Never push to `main`; it takes merges from `development` only. Maintainers commit straight to `development`; contributors fork, branch from `development` and open the PR against it (CONTRIBUTING.md, "Sending a change"). Do not assume you are a maintainer: you may be in a fork or a topic branch.
+- Commit subjects use conventional prefixes: `feat:`, `fix:`, `chore:`, `docs:`.
+- Ask before bumping `vendor/lock.json`: it re-vendors the whole upstream tree.
+- Ask before adding a whole-file entry to `DESELECTED` in `tools/upstream-tests.mjs`: it drops every test in the file, passing ones included (once 126 were skipped silently). Use `file.py::test_name`; a test caps whole-file entries at 10 and requires a stated reason.
+- Ask before changing `package.json` `files[]`: it defines the published surface, and a file the README links but the tarball omits is a 404 no reader can diagnose.
+- Ask before raising the README past 320 lines: developer material belongs in CONTRIBUTING.md, and a test enforces the budget.
 
-- Most files are **generated**. An edit to one is discarded on the next sync.
-- Most content is **upstream's**. A fix here that upstream also needs becomes a
-  divergence this repository carries forever.
+## Where things are
 
-## Commands
+- Hand-written: `tools/` (build, verify, upstream-suite harness, secret scan), `src/extensions/` (the two extensions; sync copies them into `extensions/`), `tests/` (`node:test`).
+- Build input, never published: `vendor/`, pinned by `vendor/lock.json`, gitignored, recreated by `npm run vendor`.
+- Every transform applied to upstream, each with its reason: `tools/sync.mjs`. Structural invariants: `tools/verify.mjs`. Behavioural ones: `tests/`.
+- Why the rules exist, and the upstream findings this port does not patch: CONTRIBUTING.md.
 
-```bash
-npm ci                  # one devDependency: the YAML parser the build reads with
-npm run build           # vendor → sync → verify (network: downloads the pinned tag)
-npm run verify          # structural checks only, no network
-npm run secrets         # scan for credential-shaped strings
-npm test                # unit + invariant tests, no network
-npm run check           # verify + secrets + tests
-```
+## Running and verifying
 
-The vendored upstream suite needs a Python environment:
+- Fresh clone: `npm ci`, then `npm run vendor` once. It downloads the pinned tag, and `verify`, `test` and `check` fail without `vendor/claude-seo/`; after that they run offline.
+- `npm run build` runs vendor, sync, verify, then `npm test`. `npm run check` runs verify, secrets and tests.
+- After changing `tools/`, `src/extensions/` or `vendor/lock.json`, run `npm run build` and commit the regenerated trees in the same change: CI fails on any diff between the committed trees and the sync output.
+- CI typechecks `src/extensions/*.ts` with `tsc`; `npm run check` does not, so a type error appears only after pushing. Extensions import the host package with `import type` only (`verify`).
+- Upstream suite, run against the shipped scripts: `python3 -m venv .venv && .venv/bin/pip install pytest requests beautifulsoup4 lxml`, then `npm run test:upstream`.
 
-```bash
-python3 -m venv .venv && .venv/bin/pip install pytest requests beautifulsoup4 lxml
-npm run test:upstream   # 874 of 962 upstream tests, run against the shipped scripts
-```
+## Conventions that differ from defaults
 
-## Never
+- Frontmatter is parsed as YAML through `tools/frontmatter.mjs`, never by hand: a hand parser shipped four agents with empty descriptions (`tests/frontmatter.test.mjs`).
+- At most 16 agents set `advertise: true`: pi-subagents silently drops the rest (`verify` and the sync fail past 16).
+- Each skill's `SKILL.md` sits one level deep in `skills/`: omp discovers nothing deeper (`verify`).
+- The published tarball carries no build input or bytecode (`verify`, which asks `npm pack` rather than the manifest).
+- README keeps `## Install`, `## Quick start`, `## Commands` and `## Troubleshooting` (`tests/tree.test.mjs`).
 
-- **Never edit `skills/`, `agents/`, `scripts/`, `extensions/`, `schema/` or
-  `data/`.** They are generated from `vendor/` by `tools/sync.mjs` and wiped on
-  every sync. Change `tools/sync.mjs`, or the upstream source.
-- **Never patch `scripts/*.py`.** Those files are byte-identical to upstream and
-  `tests/tree.test.mjs` asserts it. An upstream defect is reported upstream, not
-  fixed here — even when the fix is two lines.
-- **Never commit a credential.** `npm run secrets` gates this in CI, but by the
-  time it fails the value is already in the git history and in every clone.
-- **Never add a runtime dependency.** The package ships with none; the single
-  devDependency is build-only and `tools/` is not published.
-- **Never widen a subagent's `tools` allowlist to fix a symptom.** pi-subagents
-  treats it as strict, so omitting the key grants *every* builtin tool rather
-  than none. The sync fails rather than emit that.
-
-## Ask first
-
-- **Bumping `vendor/lock.json`** — it re-vendors the entire upstream tree.
-- **Adding a whole-file entry to `DESELECTED`** in `tools/upstream-tests.mjs` —
-  it drops every test in that file, including the ones that pass. Prefer
-  `file.py::test_name`. Doing this once silently skipped 126 tests.
-- **Changing `package.json` `files[]`** — it defines the published surface, and a
-  file the README links but the tarball omits is a 404 no reader can diagnose.
-- **Raising the README past 320 lines** — developer material belongs in
-  CONTRIBUTING.md; a test enforces the budget.
-
-## Invariants the build enforces
-
-Each exists because it was broken silently at least once.
-
-| Invariant | Enforced by |
-|---|---|
-| Frontmatter is parsed as YAML, not by hand | `tools/frontmatter.mjs` + `tests/frontmatter.test.mjs` |
-| Every agent carries a `tools` allowlist | sync throws if the mapped list would be empty |
-| `advertise: true` on at most 16 agents | verify + sync (pi-subagents caps the catalog) |
-| Every skill's `SKILL.md` sits one level deep | verify (omp discovers nothing deeper) |
-| Shipped Python is byte-identical to upstream | verify + `tests/tree.test.mjs` |
-| The published tarball carries no build input or bytecode | verify (asks `npm pack`, not the manifest) |
-| README keeps its user sections and its size budget | `tests/tree.test.mjs` |
-
-## Layout
-
-| Path | Kind | Notes |
-|---|---|---|
-| `tools/` | hand-written | build, verify, upstream harness, secret scan |
-| `src/extensions/` | hand-written | the two extensions; sync copies them into `extensions/` |
-| `tests/` | hand-written | `node:test` |
-| `vendor/` | build input | pinned upstream; never published |
-| `skills/` `agents/` `scripts/` `extensions/` `schema/` `data/` | **generated** | rebuilt by `npm run sync` |
-
-## Where the detail lives
-
-- [CONTRIBUTING.md](CONTRIBUTING.md) — the transforms, the reasoning, the open
-  upstream findings this port deliberately does not patch.
-- `tools/verify.mjs` — the executable list of structural invariants.
-- `tests/` — the executable list of behavioural ones.
-- `tools/sync.mjs` — every transform applied to upstream, each with its reason.
+<!-- /bmad:context -->

@@ -14,8 +14,9 @@ they have different rules:
 | Document something | Any file except the generated trees |
 
 **Never edit the generated trees in place** — `skills/`, `agents/`, `scripts/`,
-`extensions/`, `schema/` and `data/` are rebuilt from `vendor/` on every sync,
-so an edit there is discarded without warning. They are committed (so a
+`extensions/`, `schema/`, `data/`, `requirements.txt` and `runtime-plugin.json`
+are rebuilt from `vendor/` on every sync, so an edit there is discarded without
+warning. They are committed (so a
 git-source install needs no build step) and CI asserts they match the sync
 output, which is what makes the discard visible rather than silent.
 
@@ -75,7 +76,7 @@ reinstall.
 
 ```bash
 npm ci           # one devDependency: the YAML parser the build reads with
-npm run build    # vendor → sync → verify  (network: downloads the pinned tag)
+npm run build    # vendor → sync → verify → test  (network: downloads the pinned tag)
 npm run verify   # structural checks only, no network
 npm run secrets  # scan for credential-shaped strings
 npm test         # unit + invariant tests, no network
@@ -85,6 +86,29 @@ npm run check    # verify + secrets + tests
 The hand-written sources are `tools/`, `src/extensions/` and `tests/`.
 `src/extensions/` is the editable copy of the two extensions; `sync` copies it
 into `extensions/`, which is what ships.
+
+### Sending a change
+
+1. Fork the repository and branch from `development`, not `main`. Name the branch
+   for the topic (`fix/schema-hook-crash`, `feat/new-agent-mapping`).
+2. Change the hand-written sources, or `tools/sync.mjs` for a transform. Never the
+   generated trees; see the top of this file.
+3. Run `npm run build`, then commit **the regenerated trees together with the
+   source change**. CI re-runs the sync and fails on any diff between it and what
+   you committed, which is the usual reason a first PR is red.
+4. Run `npm run check` before pushing. It does not typecheck `src/extensions/`;
+   CI does, so a type error there appears only after you push.
+5. Open the PR against `development`. `main` only receives merges from
+   `development`.
+
+Commit subjects use conventional prefixes (`feat:`, `fix:`, `chore:`, `docs:`).
+CI needs no secrets, so it runs the same on a fork as on this repository.
+
+A defect in upstream's own files (`scripts/*.py`, skill bodies) belongs in the
+upstream repository, not in a PR here.
+
+Releases are cut by maintainers: pushing a `v*` tag publishes to npm, and the tag
+must equal the `package.json` version, which the sync inherits from upstream.
 
 ### The vendored upstream suite
 
