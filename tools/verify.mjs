@@ -606,6 +606,8 @@ try {
   currentBranch = "";
 }
 
+const LONG_LIVED_BRANCHES = new Set(["main", "master", "development", "develop", "trunk"]);
+
 const pushBlock = /^on:\n(?:.*\n)*?\s{2}push:\n((?:\s{4,}.*\n?)*)/m.exec(workflow);
 const pushBranches = pushBlock && /branches:\s*\[([^\]]*)\]/.exec(pushBlock[1]);
 const branches = pushBranches
@@ -616,7 +618,15 @@ if (!pushBlock) {
   fail("ci.yml has no parseable `on.push` block", "the workflow may not run on push at all");
 } else if (branches === null) {
   ok("CI runs on every push (no branch filter)");
-} else if (currentBranch && currentBranch !== "HEAD" && !branches.includes(currentBranch)) {
+} else if (
+  currentBranch &&
+  currentBranch !== "HEAD" &&
+  !branches.includes(currentBranch) &&
+  // A contributor's topic branch (`fix/...`) never matches a push filter by
+  // design: its CI runs through `pull_request`. Only a long-lived branch
+  // missing from the filter is the bug this check exists for.
+  (LONG_LIVED_BRANCHES.has(currentBranch) || !/^  pull_request:/m.test(workflow))
+) {
   fail(
     `CI push trigger does not include the current branch '${currentBranch}'`,
     `it names: ${branches.join(", ")} — pushes to this branch would never run CI`
