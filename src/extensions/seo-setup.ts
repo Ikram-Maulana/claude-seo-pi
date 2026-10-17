@@ -1,5 +1,5 @@
 /**
- * SEO runtime extension — wires the ported claude-seo skills into pi and omp.
+ * SEO runtime extension: wires the ported claude-seo skills into pi and omp.
  *
  * The host import is type-only, so it is erased at runtime and never resolved;
  * both runtimes expose the same extension surface (pi.on / pi.registerCommand).
@@ -27,7 +27,7 @@ const COMMANDS =
  *
  * Without this, runtime.py's `_is_plugin()` returns false (we strip the
  * `.claude-plugin/` directory it probes) and it puts the venv *inside the
- * installed package*, which is replaced on every reinstall — silently throwing
+ * installed package*, which is replaced on every reinstall, silently throwing
  * away a multi-hundred-megabyte environment. Setting it explicitly takes the
  * highest-precedence branch in `_data_dir()` and mirrors upstream's own plugin
  * fallback, so the venv survives upgrades.
@@ -45,7 +45,7 @@ function dataDir() {
 /**
  * Surface a message without assuming a logger.
  *
- * There is no `pi.logger` in the extension API — only `ctx.ui.notify`, which
+ * There is no `pi.logger` in the extension API, only `ctx.ui.notify`, which
  * needs a context. Notices that fire before any context exists (module load)
  * go to stderr instead.
  */
@@ -80,7 +80,7 @@ export default function seoSetup(pi: ExtensionAPI) {
 
   // `/seo` command
   pi.registerCommand("seo", {
-    description: "SEO analysis — delegates to the seo skill. Usage: /seo [command] [url]",
+    description: "SEO analysis: delegates to the seo skill. Usage: /seo [command] [url]",
     handler: async (args: string, ctx) => {
       if (!args) {
         ctx.ui.notify(
@@ -103,7 +103,7 @@ export default function seoSetup(pi: ExtensionAPI) {
     if (!existsSync(SCRIPTS_DIR)) {
       notify(
         ctx,
-        "[claude-seo-pi] scripts/ is missing — reinstall the package or run the sync script.",
+        "[claude-seo-pi] scripts/ is missing: reinstall the package or run the sync script.",
         "warning"
       );
       return;

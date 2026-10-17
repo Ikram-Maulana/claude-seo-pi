@@ -2,7 +2,7 @@
 
 <!--
   This file exists only as a bridge for tools that read CLAUDE.md but not
-  AGENTS.md — Claude Code reads CLAUDE.md natively and AGENTS.md only via an
+  AGENTS.md. Claude Code reads CLAUDE.md natively and AGENTS.md only via an
   `@path` import.
 
   Keep it to the import. Everything else belongs in AGENTS.md, which is the

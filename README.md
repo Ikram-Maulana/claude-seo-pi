@@ -21,8 +21,8 @@ omp plugin install claude-seo-pi
 | | Needed for | Notes |
 |---|---|---|
 | **Python 3.10+** | every skill | Required. `/seo setup` builds an isolated virtualenv; it never touches your global site-packages. |
-| **Node 22+** | the MCP-backed integrations | Only to run those MCP servers. Not needed for the rest — but the ones below already require 22 themselves. |
-| **[pi-subagents](https://www.npmjs.com/package/pi-subagents)** ≥ 0.66.0 | the 20 specialist agents | **pi only.** Install separately — see below. |
+| **Node 22+** | the MCP-backed integrations | Only to run those MCP servers. Not needed for the rest, though the ones below already require 22 themselves. |
+| **[pi-subagents](https://www.npmjs.com/package/pi-subagents)** ≥ 0.66.0 | the 20 specialist agents | **pi only.** Install separately, see below. |
 
 Everything else (BeautifulSoup, Playwright/Chromium, Google API clients,
 matplotlib/WeasyPrint) is installed into the managed virtualenv by `/seo setup`.
@@ -49,7 +49,7 @@ pi install npm:pi-subagents
 This is what makes the 20 specialist agents dispatchable. It is deliberately not
 a dependency of this package: pi does not register a *dependency* as a package,
 so a bundled copy would be installed but never loaded, and would risk shadowing
-your own. Without it every skill still works — audits simply run sequentially
+your own. Without it every skill still works; audits simply run sequentially
 instead of delegating in parallel. omp has native agent support and needs
 nothing extra.
 
@@ -79,7 +79,7 @@ A full audit detects the business type (SaaS, local, e-commerce, publisher,
 agency), spawns the relevant specialists, and returns a scored report with
 findings bucketed Critical / High / Medium / Low plus a sequenced action plan.
 Expect it to take a few minutes: it fetches pages, parses HTML, and may run
-Lighthouse. Narrow commands are much faster — `/seo schema <url>` or
+Lighthouse. Narrow commands are much faster: `/seo schema <url>` or
 `/seo sitemap <url>` return in seconds and touch a single concern.
 
 **Nothing here requires an API key.** Without credentials, Core Web Vitals are
@@ -119,7 +119,7 @@ Every skill is also directly invocable as `/skill:seo-<name>`.
 
 ### Integrations
 
-These need credentials or an MCP server — see [Optional integrations](#optional-integrations).
+These need credentials or an MCP server, see [Optional integrations](#optional-integrations).
 
 | Command | Needs |
 |---|---|
@@ -151,7 +151,7 @@ These need credentials or an MCP server — see [Optional integrations](#optiona
 
 All optional. Each is off until you configure it; the skill tells you when its
 prerequisite is missing. Every installer section below is what the upstream
-`install.sh` scripts would have configured — those write to `~/.claude.json`,
+`install.sh` scripts would have configured; those write to `~/.claude.json`,
 which pi and omp do not read, so the equivalent lives here instead.
 
 ### Google APIs (free, no MCP server)
@@ -162,7 +162,7 @@ workflow needs it.
 | Tier | Credential | Unlocks |
 |---|---|---|
 | **0** | API key | PageSpeed Insights, CrUX, CrUX History (25-week trends) |
-| **1** | + service account | + Search Console, URL Inspection, sitemaps, Indexing API |
+| **1** | + service account or `gcloud` sign-in | + Search Console, URL Inspection, sitemaps, Indexing API |
 | **2** | + GA4 property ID | + organic traffic, landing pages, device/country breakdown |
 | **3** | + Ads developer token | + Keyword Planner search volume and competition |
 
@@ -182,7 +182,9 @@ For Tier 1+, add a service account: download its JSON key, and add its
 Indexing API) and as a Viewer on the GA4 property. Credentials can also come
 from the environment (`GOOGLE_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`,
 `GA4_PROPERTY_ID`, `GSC_PROPERTY`). Check what you unlocked with
-`/seo google setup` and `/seo google quotas`.
+`/seo google setup` and `/seo google quotas`. If a service account cannot see a
+property you own, `gcloud auth application-default login` is the fallback;
+`CLAUDE_SEO_GOOGLE_AUTH=adc` prefers it.
 
 The Indexing API only accepts eligible `JobPosting` pages and `BroadcastEvent`
 pages embedded in `VideoObject`; a notification is not a guarantee of indexing.
@@ -246,7 +248,7 @@ These integrations need no MCP server, only credentials:
 | Profound | `PROFOUND_API_KEY` | same |
 | SE Ranking | `SERANKING_API_KEY` | same |
 | Matomo | `MATOMO_URL`, `MATOMO_API_TOKEN`, `MATOMO_SITE_ID` | same, or `~/.config/claude-seo/matomo.json` (`0600`) |
-| Unlighthouse | — | needs only Node 22.18+; no key |
+| Unlighthouse | none | needs only Node 22.18+; no key |
 
 Three runtime variables are set for you by the extension, documented here only
 because setting them yourself overrides the default:
@@ -294,7 +296,7 @@ pi remove npm:claude-seo-pi
 omp plugin uninstall claude-seo-pi
 ```
 
-The managed Python environment in `~/.local/share/claude-seo` is not removed —
+The managed Python environment in `~/.local/share/claude-seo` is not removed, so
 delete it manually to reclaim the disk. Credentials under `~/.config/claude-seo/`
 are likewise left alone.
 
@@ -302,7 +304,7 @@ are likewise left alone.
 
 This is a port, not a fork: the upstream plugin is vendored at a pinned tag and
 transformed at build time, and the generated trees (`skills/`, `agents/`,
-`scripts/`, `extensions/`) are rebuilt on every sync — edit them upstream or in
+`scripts/`, `extensions/`) are rebuilt on every sync, so edit them upstream or in
 `tools/sync.mjs`, never in place.
 
 **[CONTRIBUTING.md](CONTRIBUTING.md)** covers the build, the test suites, the
@@ -311,7 +313,7 @@ not patch.
 
 ## Credits
 
-Ported from [claude-seo](https://github.com/AgriciDaniel/claude-seo) v2.4.0 by
+Ported from [claude-seo](https://github.com/AgriciDaniel/claude-seo) v2.4.2 by
 [AgriciDaniel](https://github.com/AgriciDaniel), MIT licensed. Upstream
 contributors include Lutfiya Miller (seo-cluster), Florian Schmitz (seo-sxo),
 Dan Colta (seo-drift) and Chris Muller (seo-hreflang).

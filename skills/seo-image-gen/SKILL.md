@@ -7,7 +7,7 @@ license: MIT
 compatibility: "Requires nanobanana MCP server"
 metadata:
   author: AgriciDaniel
-  version: "2.4.0"
+  version: "2.4.2"
   category: seo
 ---
 
@@ -144,7 +144,7 @@ https://ai.google.dev/gemini-api/docs/pricing, store dated values in
 | MCP not configured | Run the banana setup section in the README or `"$SEO_PLUGIN_ROOT/scripts/claude-seo" run --extension banana setup_mcp.py --key YOUR_KEY` |
 | API key invalid | New key at https://aistudio.google.com/apikey |
 | Rate limited (429) | Wait 60s, retry. Check current free-tier limits before batch operations |
-| `IMAGE_SAFETY` | Rephrase prompt - see `references/prompt-engineering.md` Safety section |
+| `IMAGE_SAFETY` | Rephrase prompt - see `references/prompt-adaptation-safety.md` |
 | MCP unavailable | Fall back: `"$SEO_PLUGIN_ROOT/scripts/claude-seo" run --extension banana generate.py --prompt "..." --aspect-ratio "16:9" --model "$NANOBANANA_MODEL"` |
 | CSV batch input | Plan first: `"$SEO_PLUGIN_ROOT/scripts/claude-seo" run --extension banana batch.py --csv requests.csv --model "$NANOBANANA_MODEL"` |
 | Extension not installed | Show install instructions: the banana setup section in the README |
@@ -158,7 +158,9 @@ https://ai.google.dev/gemini-api/docs/pricing, store dated values in
 ## Reference Documentation
 
 Load on-demand. Do NOT load all at startup:
-- `references/prompt-engineering.md`:6-component system, domain modes, templates
+- `references/prompt-engineering.md`: 6-component system, domain modes, advanced techniques
+- `references/prompt-templates.md`: ready-to-use templates by use case
+- `references/prompt-adaptation-safety.md`: model adaptation rules, common mistakes, safety-filter rephrasing
 - `references/gemini-models.md`:Model specs, rate limits, capabilities
 - `references/mcp-tools.md`:MCP tool parameters and responses
 - `references/post-processing.md`:ImageMagick/FFmpeg pipeline recipes

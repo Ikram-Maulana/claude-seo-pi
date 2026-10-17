@@ -33,7 +33,7 @@ Instructions for coding agents in this repository; user docs are in [README.md](
 - `npm run build` runs vendor, sync, verify, then `npm test`. `npm run check` runs verify, secrets and tests.
 - After changing `tools/`, `src/extensions/` or `vendor/lock.json`, run `npm run build` and commit the regenerated trees in the same change: CI fails on any diff between the committed trees and the sync output.
 - CI typechecks `src/extensions/*.ts` with `tsc`; `npm run check` does not, so a type error appears only after pushing. Extensions import the host package with `import type` only (`verify`).
-- Upstream suite, run against the shipped scripts: `python3 -m venv .venv && .venv/bin/pip install pytest requests beautifulsoup4 lxml`, then `npm run test:upstream`.
+- Upstream suite, run against the shipped scripts: `python3 -m venv .venv && .venv/bin/pip install pytest requests beautifulsoup4 lxml google-auth`, then `npm run test:upstream`.
 
 ## Conventions that differ from defaults
 

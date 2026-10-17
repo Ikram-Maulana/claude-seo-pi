@@ -122,8 +122,8 @@ every shipped script deleted.
 It needs `pytest`, `requests`, `beautifulsoup4` and `lxml`:
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install pytest requests beautifulsoup4 lxml
-npm run test:upstream        # 874 of 962 upstream tests
+python3 -m venv .venv && .venv/bin/pip install pytest requests beautifulsoup4 lxml google-auth
+npm run test:upstream        # 897 of 985 upstream tests
 ```
 
 The harness finds the interpreter via `CLAUDE_SEO_PYTHON`, then `.venv/bin/python`,
@@ -205,7 +205,7 @@ divergence to carry on every upstream bump, and it destroys the value of
 `diff -r scripts/ vendor/claude-seo/scripts/` as a review signal. Anything
 upstream gets wrong is reported upstream instead.
 
-Three upstream findings are open and unfixed here, all verified against v2.4.0:
+Three upstream findings are open and unfixed here, all verified against v2.4.2:
 
 - **`youtube_search.py` echoes the Google API key in its error output.** A 400 —
   the ordinary invalid-key case — produces
@@ -226,7 +226,7 @@ on purpose — see the paragraph above.
 
 ## Credits
 
-Ported from [claude-seo](https://github.com/AgriciDaniel/claude-seo) v2.4.0 by
+Ported from [claude-seo](https://github.com/AgriciDaniel/claude-seo) v2.4.2 by
 [AgriciDaniel](https://github.com/AgriciDaniel), MIT licensed. Upstream
 contributors include Lutfiya Miller (seo-cluster), Florian Schmitz (seo-sxo),
 Dan Colta (seo-drift) and Chris Muller (seo-hreflang).

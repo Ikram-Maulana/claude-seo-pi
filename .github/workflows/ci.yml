@@ -155,7 +155,7 @@ jobs:
       - name: Install Python test dependencies
         run: |
           python3 -m pip install --quiet --disable-pip-version-check \
-            pytest requests beautifulsoup4 lxml
+            pytest requests beautifulsoup4 lxml google-auth
 
       - name: Vendor and sync
         run: |

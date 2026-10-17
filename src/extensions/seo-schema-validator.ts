@@ -35,6 +35,20 @@ function writtenPath(input: unknown): string | undefined {
   return undefined;
 }
 
+/** Unwrap the hook JSON that carries warnings; anything else is already plain text. */
+function report(raw: string): string {
+  const text = raw.trim();
+  try {
+    const context = JSON.parse(text)?.hookSpecificOutput?.additionalContext;
+    if (typeof context === "string") {
+      return context.trim();
+    }
+  } catch {
+    // not JSON
+  }
+  return text;
+}
+
 export default function seoSchemaValidator(pi: ExtensionAPI) {
   if (!existsSync(HOOK_SCRIPT)) {
     return;
@@ -53,10 +67,9 @@ export default function seoSchemaValidator(pi: ExtensionAPI) {
       "python3",
       [HOOK_SCRIPT, filePath],
       { timeout: TIMEOUT_MS, encoding: "utf-8" },
-      (error, stdout) => {
-        // Exit code 2 means "findings" upstream, which node reports as an
-        // error — the report is still on stdout, so read it either way.
-        const output = (stdout ?? "").trim();
+      (error, stdout, stderr) => {
+        // Exit 2 puts critical errors on stderr; any other exit puts warnings on stdout.
+        const output = report(error?.code === 2 ? (stderr ?? "") : (stdout ?? ""));
         if (output) {
           // No ctx to notify through in a background lint. stderr keeps it out
           // of the model's context while staying visible in the session log.

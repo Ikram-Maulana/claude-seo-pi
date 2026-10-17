@@ -10,7 +10,9 @@
  * source file is loaded rather than a copy.
  */
 import { strict as assert } from "node:assert";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -177,3 +179,58 @@ test("the schema validator never patches the tool result it observes", { skip },
     "the handler returns a value, which would patch the tool result"
   );
 });
+
+const PYTHON_MISSING = spawnSync("python3", ["--version"]).error ? "python3 is not installed" : false;
+
+/** Run the built validator on a page and collect the lines it logged. */
+async function validatorReport(html) {
+  const dir = mkdtempSync(join(tmpdir(), "seo-schema-"));
+  const page = join(dir, "page.html");
+  writeFileSync(page, html);
+
+  const { default: validator } = await import(
+    pathToFileURL(join(repoRoot, "extensions", "seo-schema-validator.ts")).href
+  );
+  const host = fakeHost();
+  validator(host.pi);
+  const { handler } = host.calls.events.find((e) => e.event === "tool_result");
+
+  const lines = [];
+  const original = console.error;
+  console.error = (line) => lines.push(String(line));
+  try {
+    await handler({ toolName: "write", input: { path: page } });
+    for (let waited = 0; lines.length === 0 && waited < 5000; waited += 25) {
+      await new Promise((done) => setTimeout(done, 25));
+    }
+  } finally {
+    console.error = original;
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return lines;
+}
+
+const JSON_LD = (body) => `<script type="application/ld+json">${body}</script>`;
+
+test(
+  "the schema validator reports critical errors, which the hook writes to stderr",
+  { skip: skip || PYTHON_MISSING },
+  async () => {
+    const lines = await validatorReport(
+      JSON_LD('{"@context":"https://schema.org","@type":"Organization","name":"[Business Name]"}')
+    );
+    assert.equal(lines.length, 1, "a critical error must reach the log, not vanish");
+    assert.match(lines[0], /^\[seo-schema\] .*placeholder text: \[Business Name\]/s);
+  }
+);
+
+test(
+  "the schema validator unwraps warnings from the hook JSON",
+  { skip: skip || PYTHON_MISSING },
+  async () => {
+    const lines = await validatorReport(JSON_LD('{"@type":"Organization","name":"Acme"}'));
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /Missing @context/);
+    assert.doesNotMatch(lines[0], /hookSpecificOutput/, "the JSON envelope leaked into the log");
+  }
+);
