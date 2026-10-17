@@ -38,8 +38,11 @@ The upstream Claude Code plugin is vendored at a pinned tag and transformed;
 Four transforms are worth calling out because they are not cosmetic:
 
 **Agent frontmatter is rewritten.** Upstream's `model: sonnet`, `maxTurns` and
-capitalised tool names are Claude Code fields. They become pi-subagents fields
-(`thinking`, `systemPromptMode`, an explicit lowercase `tools` allowlist). pi has
+capitalised tool names are Claude Code fields. `model` and `maxTurns` are dropped
+(pi-subagents removed turn budgets in 0.59.0, and `model: sonnet` is no selector
+in either runtime), so an agent carries no model and no `thinking`; the tools
+become an explicit lowercase `tools` allowlist and `systemPromptMode` and the
+`inherit*` flags are added. pi has
 no built-in web fetch or search tool, so `WebFetch`/`WebSearch` are dropped
 rather than left in an allowlist where they would silently grant nothing. The
 agents that referenced them — `seo-cluster`, `seo-flow`, `seo-geo`, `seo-local`,
@@ -48,6 +51,24 @@ server; they just do not get a tool grant they cannot use. Their **prose** is
 rewritten too: an instruction to "call WebFetch" now names the packaged
 `fetch_page.py` fetcher or a web-fetch MCP tool, so the body never points at a
 tool the agent does not have.
+
+**Agents inherit the session's model, and omp does not inherit its thinking
+level.** With no `model`, both runtimes run an agent on the parent's model. omp
+passes that model without the `:level` suffix, so the agent's thinking level
+falls back to the global `defaultThinkingLevel`, which is `high` unless set. A
+session on `…:max` therefore spawns `…:high` agents (seen in omp session logs as
+`thinking_level_change … "configured": null`). The port does not pin a level: a
+hard-coded one would override every user's choice on 20 agents. Set
+`omp config set defaultThinkingLevel max` to follow the session.
+
+**The `tools` allowlist is strict on pi, not on omp.** pi-subagents grants
+exactly the listed tools. omp applies the list to its built-in tools only and
+adds every connected MCP server's tools to each subagent (an omp session log
+shows `seo-technical` holding `read, bash, write, grep` plus the whole MCP
+catalogue). `mcp:dataforseo` is a pi-mcp-adapter selector that omp ignores,
+harmlessly, since omp offers the server's tools anyway. An agent without `bash`
+is therefore not sandboxed on omp; do not rely on the list as a security
+boundary there.
 
 **Four agents are held back from the parent catalog.** pi-subagents advertises at
 most 16 agents in the parent system prompt (`MAX_ADVERTISED_AGENTS`) and picks
@@ -107,8 +128,13 @@ CI needs no secrets, so it runs the same on a fork as on this repository.
 A defect in upstream's own files (`scripts/*.py`, skill bodies) belongs in the
 upstream repository, not in a PR here.
 
-Releases are cut by maintainers: pushing a `v*` tag publishes to npm, and the tag
-must equal the `package.json` version, which the sync inherits from upstream.
+Releases are cut by maintainers: pushing a `v*` tag starts `release.yml`, whose
+`publish` job then waits for approval in the `npm-release` environment before it
+publishes to npm. The tag must equal the `package.json` version, which the sync
+inherits from upstream. The environment's required reviewer and the `v*` tag
+ruleset live in repository settings, not in the tree, so a fork that wants the
+same gate has to recreate both; if npm's trusted-publisher entry names an
+environment, it must be `npm-release`.
 
 ### The vendored upstream suite
 
@@ -205,7 +231,7 @@ divergence to carry on every upstream bump, and it destroys the value of
 `diff -r scripts/ vendor/claude-seo/scripts/` as a review signal. Anything
 upstream gets wrong is reported upstream instead.
 
-Three upstream findings are open and unfixed here, all verified against v2.4.2:
+Four upstream findings are open and unfixed here, all verified against v2.4.2:
 
 - **`youtube_search.py` echoes the Google API key in its error output.** A 400 —
   the ordinary invalid-key case — produces
@@ -219,6 +245,14 @@ Three upstream findings are open and unfixed here, all verified against v2.4.2:
 - **`url_safety.validate_url()` raises on a malformed IPv6 URL** (`http://[::1`),
   violating its documented `-> bool` contract. Fail-closed, not an SSRF bypass,
   but it crashes 19 call sites with a traceback instead of returning `False`.
+
+- **`test_hostile_inputs.py::test_deeply_nested_well_known_document_is_a_finding`
+  fails on Python 3.14.** It feeds `agentic_check.audit_well_known` a 100000-deep
+  `[[[…]]]` and expects a `fail` finding, assuming `json.loads` raises
+  `RecursionError`. From 3.14 it parses the document, so the check correctly
+  reports valid JSON and the test's premise is gone; the script is not broken.
+  CI runs the upstream suite on 3.12 for this reason and runs the runtime job on
+  3.10, 3.12 and 3.14.
 
 If you need the first one fixed locally, `redact_google_api_key` is already
 importable from `google_auth`; the change is two lines. It is not applied here

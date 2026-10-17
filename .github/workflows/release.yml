@@ -118,6 +118,11 @@ jobs:
   publish:
     needs: [verify, upstream-suite]
     runs-on: ubuntu-latest
+    # A tag push alone must not publish: this environment carries a required
+    # reviewer (repository Settings > Environments), so the job pauses until a
+    # maintainer approves it. If npm's trusted-publisher entry names an
+    # environment, it has to be this one.
+    environment: npm-release
     # Trusted publishing exchanges this OIDC token for a short-lived publish
     # credential, so no NPM_TOKEN is stored anywhere.
     permissions:

@@ -48,6 +48,17 @@ test("the release publishes with provenance and only for v* tags", () => {
   assert.equal(release.jobs.publish.permissions["id-token"], "write");
 });
 
+test("the publish job waits on a protected environment, not just on a tag push", () => {
+  const { publish } = workflow("release.yml").jobs;
+  assert.equal(publish.environment, "npm-release", "publish no longer pauses for an approval");
+});
+
+test("the Python runtime job covers the declared floor and the newest Python", () => {
+  const { python } = workflow("ci.yml").jobs["python-runtime"].strategy.matrix;
+  assert.ok(python.includes("3.10"), "README promises Python 3.10+, but CI no longer tests it");
+  assert.ok(python.some((v) => Number(v.split(".")[1]) >= 14), "CI no longer tests a current Python");
+});
+
 test("the tree-drift gates see untracked files in both workflows", () => {
   for (const name of ["ci.yml", "release.yml"]) {
     const w = workflow(name);

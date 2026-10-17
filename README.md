@@ -279,11 +279,11 @@ Each skill's own `references/` directory holds the detail for that domain.
 | "runtime is not ready" from any skill | Run `/seo setup`. Do not `pip install` by hand. |
 | Chromium missing but core is fine | Rendered-page features are degraded; raw-fetch analysis still works. Re-run `/seo setup` to retry Chromium. |
 | MCP tools not available | The server is not connected. Verify the entry and restart the session. |
-| `403 Forbidden` on GSC | The service account `client_email` is not a user on the Search Console property. |
-| `403 Forbidden` on GA4 | Same, as a Viewer on the GA4 property. |
+| `403 Forbidden` on GSC or GA4 | The service account `client_email` is not a user on the Search Console property, or a Viewer on the GA4 property. |
 | `404` on CrUX | Not enough Chrome traffic for that URL or origin. Not a credentials problem. |
 | `429` | Quota hit. Wait and retry; check `/seo google quotas`. |
 | Agents not dispatchable on pi | `pi install npm:pi-subagents`, then restart. |
+| omp agents run at `high` while your session is `max` | Agents inherit the model, not the thinking level. Run `omp config set defaultThinkingLevel max`. |
 | A skill cites a file that does not exist | Upstream drift. Please open an issue. |
 
 ## Uninstall

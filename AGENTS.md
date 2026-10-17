@@ -11,8 +11,8 @@ Instructions for coding agents in this repository; user docs are in [README.md](
 - Never patch `scripts/*.py`, even for a two-line fix: it is byte-identical to upstream (`tests/tree.test.mjs`, `verify`), so a local fix is a divergence carried on every bump. Report it upstream; the open findings this port deliberately leaves unpatched are listed in CONTRIBUTING.md.
 - Never commit a credential: `npm run secrets` gates CI, but by then the value is already in git history.
 - Never add a runtime dependency: the package ships none, and `tools/` is not published.
-- Never widen a subagent's `tools` allowlist to fix a symptom: pi-subagents treats it as strict, so omitting the key grants every builtin tool. The sync fails rather than emit that.
-- Never create or push a `v*` tag without the maintainer's explicit say-so: it triggers `release.yml`, publishes to npm and cannot be undone. The tag must equal the `package.json` version, which the sync inherits from upstream.
+- Never widen a subagent's `tools` allowlist to fix a symptom: pi-subagents treats it as strict, so omitting the key grants every builtin tool. The sync fails rather than emit that. omp is looser (it adds every connected MCP tool to each subagent), so the list is no sandbox there (CONTRIBUTING.md).
+- Never create or push a `v*` tag without the maintainer's explicit say-so: it triggers `release.yml`, which publishes to npm after approval in the `npm-release` environment and cannot be undone. The tag must equal the `package.json` version, which the sync inherits from upstream.
 - Never push to `main`; it takes merges from `development` only. Maintainers commit straight to `development`; contributors fork, branch from `development` and open the PR against it (CONTRIBUTING.md, "Sending a change"). Do not assume you are a maintainer: you may be in a fork or a topic branch.
 - Commit subjects use conventional prefixes: `feat:`, `fix:`, `chore:`, `docs:`.
 - Ask before bumping `vendor/lock.json`: it re-vendors the whole upstream tree.
@@ -23,6 +23,7 @@ Instructions for coding agents in this repository; user docs are in [README.md](
 ## Where things are
 
 - Hand-written: `tools/` (build, verify, upstream-suite harness, secret scan), `src/extensions/` (the two extensions; sync copies them into `extensions/`), `tests/` (`node:test`).
+- Local agent tooling, not part of the package: `.agents/skills/`, the `.claude/skills/` symlinks into it and `skills-lock.json` (BMad skills for maintainers' sessions). Never in `files[]`; leave them alone when changing the port.
 - Build input, never published: `vendor/`, pinned by `vendor/lock.json`, gitignored, recreated by `npm run vendor`.
 - Every transform applied to upstream, each with its reason: `tools/sync.mjs`. Structural invariants: `tools/verify.mjs`. Behavioural ones: `tests/`.
 - Why the rules exist, and the upstream findings this port does not patch: CONTRIBUTING.md.

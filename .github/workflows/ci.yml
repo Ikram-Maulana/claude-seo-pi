@@ -146,6 +146,9 @@ jobs:
           node-version: 24
           cache: npm
 
+      # Pinned to 3.12 on purpose: upstream's test_hostile_inputs.py assumes
+      # json.loads raises RecursionError on 100000-deep nesting, which Python 3.14
+      # no longer does. See CONTRIBUTING.md, "Upstream Python ships verbatim".
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -173,6 +176,12 @@ jobs:
   python-runtime:
     runs-on: ubuntu-latest
     needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        # README promises Python 3.10+: test the floor, the version the upstream
+        # suite runs on, and the newest stable one.
+        python: ["3.10", "3.12", "3.14"]
     steps:
       - uses: actions/checkout@v7
 
@@ -185,7 +194,7 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
 
       - name: Install build dependencies
         run: npm ci
